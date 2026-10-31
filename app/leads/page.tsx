@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect, Suspense } from 'react';
 
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -21,7 +21,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
-import { isFollowUpDueOnOrBeforeToday } from '@/lib/lead-reporting';
+import {
+  isFollowUpDueToday,
+  isFollowUpOverdue,
+} from '@/lib/lead-reporting';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -35,6 +39,7 @@ import {
 function LeadsContent() {
   const { leads, dateRange, deleteLead, loadLeads, influencers, loadInfluencers, users, loadUsers, role } = useStore();
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   useEffect(() => {
     loadLeads();
@@ -46,7 +51,7 @@ function LeadsContent() {
   const [ratingFilter, setRatingFilter] = useState<string>('all');
   const [nameFilter, setNameFilter] = useState<string>('');
   const [mobileFilter, setMobileFilter] = useState<string>('');
-  const [showTodayFollowUp, setShowTodayFollowUp] = useState(false);
+  const [followUpTab, setFollowUpTab] = useState<'today' | 'overdue' | null>(null);
   
   const [influencerFilter, setInfluencerFilter] = useState('all');
   const [gstFilter, setGstFilter] = useState('all');
@@ -82,7 +87,8 @@ function LeadsContent() {
     
     if (status) setStatusFilter(status);
     if (rating) setRatingFilter(rating);
-    if (view === 'today_followup') setShowTodayFollowUp(true);
+    if (view === 'today_followup') setFollowUpTab('today');
+    if (view === 'overdue_followup') setFollowUpTab('overdue');
     if (gst && ['yes', 'no', 'YES', 'NO', 'APPLIED', 'APPLIED_THROUGH_US'].includes(gst)) {
       setGstFilter(gst.toUpperCase() === 'YES' ? 'YES' : gst.toUpperCase() === 'NO' ? 'NO' : gst);
     }
@@ -97,12 +103,30 @@ function LeadsContent() {
     }
   }, [salesPersonFilter, loadLeads]);
 
+  const followUpTodayCount = useMemo(
+    () => leads.filter((l) => isFollowUpDueToday(l)).length,
+    [leads],
+  );
+  const followUpOverdueCount = useMemo(
+    () => leads.filter((l) => isFollowUpOverdue(l)).length,
+    [leads],
+  );
+
+  const setFollowUpView = (tab: 'today' | 'overdue' | null) => {
+    setFollowUpTab(tab);
+    if (tab === 'today') router.replace('/leads?view=today_followup');
+    else if (tab === 'overdue') router.replace('/leads?view=overdue_followup');
+    else router.replace('/leads');
+  };
+
   const filteredLeads = useMemo(() => {
     let filtered = [...leads];
 
-    // Priority 1: Follow-up queue — today + overdue (carry-forward until rescheduled or converted)
-    if (showTodayFollowUp) {
-      filtered = filtered.filter((l) => isFollowUpDueOnOrBeforeToday(l));
+    if (followUpTab === 'today') {
+      filtered = filtered.filter((l) => isFollowUpDueToday(l));
+      filtered.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (followUpTab === 'overdue') {
+      filtered = filtered.filter((l) => isFollowUpOverdue(l));
       filtered.sort((a, b) => {
         const da = new Date(a.followUpDate!).getTime();
         const db = new Date(b.followUpDate!).getTime();
@@ -117,7 +141,7 @@ function LeadsContent() {
     }
 
     // 2. Creation Date range filter (createdAt) — skip in follow-up queue so overdue leads are not hidden
-    if (!showTodayFollowUp && (dateRange.from || dateRange.to)) {
+    if (!followUpTab && (dateRange.from || dateRange.to)) {
       filtered = filtered.filter(l => {
         const createdDate = new Date(l.createdAt);
         createdDate.setHours(0, 0, 0, 0);
@@ -220,12 +244,12 @@ function LeadsContent() {
     }
 
     return filtered;
-  }, [leads, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, showTodayFollowUp, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
+  }, [leads, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
 
   // Reset pagination whenever the filtered set changes (filter, search, date, etc.).
   useEffect(() => {
     setLeadsPage(1);
-  }, [statusFilter, ratingFilter, nameFilter, mobileFilter, showTodayFollowUp, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter, dateRange]);
+  }, [statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter, dateRange]);
 
   const paginatedLeads = useMemo(
     () => paginateArray(filteredLeads, leadsPage, LEADS_PAGE_SIZE),
@@ -272,12 +296,14 @@ function LeadsContent() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-4xl font-bold tracking-tight mb-2">
-              {showTodayFollowUp ? 'Follow-ups due' : 'Leads'}
+              {followUpTab ? 'Follow-ups' : 'Leads'}
             </h1>
             <p className="text-muted-foreground">
-              {showTodayFollowUp
-                ? 'Today and overdue follow-ups until you reschedule or convert'
-                : 'Manage and track your leads'}
+              {followUpTab === 'today'
+                ? 'Leads scheduled for a follow-up today (1★ excluded)'
+                : followUpTab === 'overdue'
+                  ? 'Past follow-up dates still open — oldest first until you reschedule or convert'
+                  : 'Manage and track your leads'}
             </p>
           </div>
         </div>
@@ -289,9 +315,11 @@ function LeadsContent() {
                 <CardTitle className="text-xl font-semibold">Leads Directory</CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">Filter and view lead details</p>
               </div>
-              <div className="flex items-center gap-2">
-                 <DateRangePicker />
-              </div>
+              {!followUpTab && (
+                <div className="flex items-center gap-2">
+                  <DateRangePicker />
+                </div>
+              )}
             </div>
           </CardHeader>
           <CardContent className="p-6">
@@ -523,26 +551,48 @@ function LeadsContent() {
               </PopoverContent>
             </Popover>
 
-            <div className="w-[200px]">
-              <DateRangePicker />
-            </div>
-          </div>
-          
-          {showTodayFollowUp && (
-              <div className="mb-6 flex items-center gap-2 animate-in fade-in slide-in-from-top-1 px-6 pt-2">
-                <Badge className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-1 flex items-center gap-2">
-                  <LucideCalendar className="h-3 w-3" />
-                  Viewing: Follow-ups due
-                  <X 
-                    className="h-3 w-3 cursor-pointer ml-1 hover:text-red-200" 
-                    onClick={() => setShowTodayFollowUp(false)} 
-                  />
-                </Badge>
-                <span className="text-xs text-muted-foreground italic">
-                  Today and overdue follow-ups (oldest first); 1★ leads excluded
-                </span>
+            {!followUpTab && (
+              <div className="w-[200px]">
+                <DateRangePicker />
               </div>
             )}
+          </div>
+
+          {followUpTab && (
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 animate-in fade-in slide-in-from-top-1">
+              <Tabs
+                value={followUpTab}
+                onValueChange={(v) => setFollowUpView(v as 'today' | 'overdue')}
+                className="w-full sm:w-auto"
+              >
+                <TabsList className="grid w-full sm:w-auto grid-cols-2 h-11">
+                  <TabsTrigger value="today" className="gap-2 font-semibold">
+                    <LucideCalendar className="h-4 w-4" />
+                    Today
+                    <Badge variant="secondary" className="ml-1 tabular-nums">
+                      {followUpTodayCount}
+                    </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="overdue" className="gap-2 font-semibold">
+                    <Clock className="h-4 w-4" />
+                    Overdue
+                    <Badge variant="secondary" className="ml-1 tabular-nums">
+                      {followUpOverdueCount}
+                    </Badge>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground shrink-0"
+                onClick={() => setFollowUpView(null)}
+              >
+                <X className="h-4 w-4 mr-1" />
+                All leads
+              </Button>
+            </div>
+          )}
 
             <div className="overflow-x-auto">
               <Table>

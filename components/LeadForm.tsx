@@ -158,7 +158,10 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const mobile = watch('mobile');
   const converted = watch('converted');
   const followUpDate = watch('followUpDate');
-  const contactAttempts = watch('contactAttempts') ?? 0;
+  const contactAttempts = Math.max(
+    0,
+    Math.min(999, Math.floor(Number(watch('contactAttempts') ?? 0) || 0)),
+  );
   const rating = watch('rating');
   const gstStatus = watch('gstStatus');
   const paymentInfoShared = watch('paymentInfoShared');

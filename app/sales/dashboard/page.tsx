@@ -28,7 +28,8 @@ import {
   effectiveConversionDate,
   isConversionInDateRange,
   isCreatedInDateRange,
-  isFollowUpDueOnOrBeforeToday,
+  isFollowUpDueToday,
+  isFollowUpOverdue,
   mergeKpiWithLeadFallback,
 } from '@/lib/lead-reporting';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -360,7 +361,11 @@ export default function SalesDashboardPage() {
   };
 
   const todayFollowUps = useMemo(
-    () => leads.filter((l) => isFollowUpDueOnOrBeforeToday(l)),
+    () => leads.filter((l) => isFollowUpDueToday(l)),
+    [leads],
+  );
+  const overdueFollowUps = useMemo(
+    () => leads.filter((l) => isFollowUpOverdue(l)),
     [leads],
   );
 
@@ -532,13 +537,29 @@ export default function SalesDashboardPage() {
           >
             <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Today Follow-up
+                Follow-up Today
               </CardTitle>
               <LucideCalendar className="h-4 w-4 text-pink-500" />
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold mb-1 text-pink-600">{todayFollowUps.length}</div>
               <p className="text-xs text-muted-foreground">Scheduled for today</p>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="kpi-card card-hover border-l-4 border-l-amber-500 cursor-pointer"
+            onClick={() => router.push('/leads?view=overdue_followup')}
+          >
+            <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                Overdue Follow-up
+              </CardTitle>
+              <Clock className="h-4 w-4 text-amber-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-4xl font-bold mb-1 text-amber-700">{overdueFollowUps.length}</div>
+              <p className="text-xs text-muted-foreground">Past dates still open</p>
             </CardContent>
           </Card>
         </div>

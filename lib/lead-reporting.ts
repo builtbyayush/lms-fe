@@ -60,10 +60,6 @@ export function localCalendarDay(d: Date): Date {
 }
 
 /**
- * Non-converted lead with a follow-up on or before today (includes overdue / carry-forward).
- * 1★ leads are excluded — treated as not interested and not part of the daily follow-up queue.
- */
-/**
  * Admin/sales KPI cards: prefer API (Sale collection) when it reports activity;
  * if API returns 0 but client derived converted rows from leads, use client (legacy sync).
  */
@@ -76,14 +72,36 @@ export function mergeKpiWithLeadFallback(
   return apiValue ?? clientValue ?? 0;
 }
 
-export function isFollowUpDueOnOrBeforeToday(lead: {
+type FollowUpQueueLead = {
   followUpDate: string | null;
   converted: boolean;
   rating?: number | null;
-}): boolean {
+};
+
+/** Non-converted, has follow-up date, not 1★ (not in daily queue). */
+export function isFollowUpQueueEligible(lead: FollowUpQueueLead): boolean {
   if (lead.converted || !lead.followUpDate) return false;
   if (lead.rating === 1) return false;
-  const due = localCalendarDay(new Date(lead.followUpDate));
+  return true;
+}
+
+/** Follow-up scheduled for today (local calendar). */
+export function isFollowUpDueToday(lead: FollowUpQueueLead): boolean {
+  if (!isFollowUpQueueEligible(lead)) return false;
+  const due = localCalendarDay(new Date(lead.followUpDate!));
   const today = localCalendarDay(new Date());
-  return due.getTime() <= today.getTime();
+  return due.getTime() === today.getTime();
+}
+
+/** Follow-up date before today — backlog until rescheduled or converted. */
+export function isFollowUpOverdue(lead: FollowUpQueueLead): boolean {
+  if (!isFollowUpQueueEligible(lead)) return false;
+  const due = localCalendarDay(new Date(lead.followUpDate!));
+  const today = localCalendarDay(new Date());
+  return due.getTime() < today.getTime();
+}
+
+/** Today plus overdue (combined queue). */
+export function isFollowUpDueOnOrBeforeToday(lead: FollowUpQueueLead): boolean {
+  return isFollowUpDueToday(lead) || isFollowUpOverdue(lead);
 }
