@@ -2,10 +2,27 @@
  * Baked in at `next build` from `NEXT_PUBLIC_API_BASE_URL` (set in .env or Docker --build-arg).
  * Never commit a public EC2 IP here - use HTTPS in production to avoid mixed-content blocks.
  */
+/** Nest uses global prefix `/api`; env may omit it (e.g. http://localhost:3000). */
+function normalizeApiBase(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "/") {
+    return "/api";
+  }
+  let base = trimmed.replace(/\/$/, "");
+  if (base.endsWith("/api")) {
+    return base;
+  }
+  // Relative same-origin base (production nginx)
+  if (base.startsWith("/") && !base.startsWith("//")) {
+    return `${base}/api`.replace(/\/+/g, "/").replace(/\/api\/api$/, "/api");
+  }
+  return `${base}/api`;
+}
+
 function resolveApiBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_BASE_URL;
   if (typeof raw === "string" && raw.trim() !== "") {
-    return raw.replace(/\/$/, "");
+    return normalizeApiBase(raw);
   }
   if (process.env.NODE_ENV === "development") {
     return "http://localhost:3000/api";

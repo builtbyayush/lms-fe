@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const { role, _hasHydrated, loadInfluencers, loadLeads, loadInteractions, loadSales } = useStore();
+  const { role, _hasHydrated, loadInfluencers, loadInteractions } = useStore();
   const router = useRouter();
 
   useEffect(() => {
@@ -19,16 +19,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     }
 
     const loadData = async () => {
-      await Promise.all([
-        loadInfluencers(),
-        loadLeads(),
-        loadSales(),
-        loadInteractions(),
-      ]);
+      await Promise.all([loadInfluencers(), loadInteractions()]);
     };
 
     loadData();
-  }, [role, _hasHydrated, router, loadInfluencers, loadLeads, loadInteractions, loadSales]);
+  }, [role, _hasHydrated, router, loadInfluencers, loadInteractions]);
 
   if (!_hasHydrated || !role) {
     return null;

@@ -37,6 +37,8 @@ export interface Lead {
   rating: number | null;
   notes?: string;
   followUpDate: string | null;
+  /** Times the team has tried to contact / follow up (updated on lead edit). */
+  contactAttempts?: number;
   converted: boolean;
   gst?: boolean;
   gstStatus?: 'YES' | 'NO' | 'APPLIED' | 'APPLIED_THROUGH_US';

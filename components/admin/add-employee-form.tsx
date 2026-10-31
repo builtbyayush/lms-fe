@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { API_BASE_URL } from '@/lib/api';
@@ -174,14 +175,14 @@ export function AddEmployeeForm({ onSuccess }: AddEmployeeFormProps) {
           <div className="space-y-2">
             <Label htmlFor="password" className="text-muted-foreground font-medium">Password</Label>
             <div className="relative">
-                <Input
+                <PasswordInput
                 id="password"
                 name="password"
-                type="text"
                 placeholder="SecurePassword123!"
                 value={formData.password}
                 onChange={handleChange}
                 required
+                autoComplete="new-password"
                 className="pl-10 h-11 bg-muted/40 border-border focus:bg-background transition-all"
                 />
                 <Lock className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />

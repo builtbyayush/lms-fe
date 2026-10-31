@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useStore } from '@/store';
 import { format } from 'date-fns';
-import { CalendarIcon, Star, CheckCircle, Loader2 } from 'lucide-react';
+import { CalendarIcon, Star, CheckCircle, Loader2, Info, Minus, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Influencer, Lead } from '@/types';
 import { cn } from '@/lib/utils';
@@ -26,6 +26,7 @@ import {
   leadCallStatuses,
   mapLeadToFormValues,
 } from '@/lib/lead-form-map';
+import { fetchLeadByMobile } from '@/lib/fetch-lead-by-mobile';
 
 const toId = extractId;
 
@@ -59,6 +60,7 @@ const leadSchema = z.object({
   rating: z.number().min(1).max(5).nullable().optional(),
   notes: z.string().min(1, 'Notes are required'),
   followUpDate: z.date().nullable().optional(),
+  contactAttempts: z.coerce.number().int().min(0).max(999),
   converted: z.boolean(),
   salesAmount: z.number().min(0).optional().nullable(),
   gstStatus: z.enum(gstStatuses).default('NO'),
@@ -128,6 +130,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
     reset,
     watch,
     formState: { errors },
+    setError,
   } = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema),
     defaultValues: {
@@ -144,6 +147,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       rating: null,
       notes: '',
       followUpDate: null,
+      contactAttempts: 0,
       converted: false,
       salesAmount: null,
       gstStatus: 'NO',
@@ -154,6 +158,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const mobile = watch('mobile');
   const converted = watch('converted');
   const followUpDate = watch('followUpDate');
+  const contactAttempts = watch('contactAttempts') ?? 0;
   const rating = watch('rating');
   const gstStatus = watch('gstStatus');
   const paymentInfoShared = watch('paymentInfoShared');
@@ -223,6 +228,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       rating: null,
       notes: '',
       followUpDate: null,
+      contactAttempts: 0,
       converted: false,
       salesAmount: null,
       gstStatus: 'NO',
@@ -232,7 +238,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   }, [bootstrap, initialMobile, reset]);
 
   /**
-   * After options + leads list are loaded: detect duplicate mobile (add flow only).
+   * Add flow: detect duplicate mobile via API (no full leads list required).
    */
   useEffect(() => {
     if (bootstrap.status !== 'ready' || bootstrap.lead || initialData?.id) return;
@@ -247,29 +253,42 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
     }
 
     const mobileDigits = clean.slice(-10);
-    const { leads, influencers: infList } = useStore.getState();
-    const found = leads.find((l) => l.mobile.replace(/\D/g, '').slice(-10) === mobileDigits);
+    let cancelled = false;
 
-    if (!found) {
-      setDiscoveredLead(null);
-      setShowAlert(false);
-      setInfluencerReadOnly(false);
-      discoverySnapshotRef.current = null;
-      return;
-    }
+    const timer = window.setTimeout(() => {
+      const run = async () => {
+        const { token, influencers: infList } = useStore.getState();
+        const found = await fetchLeadByMobile(mobile, token);
+        if (cancelled) return;
 
-    const snap = discoverySnapshotRef.current;
-    if (snap && snap.mobileDigits === mobileDigits && snap.leadId === found.id) {
-      return;
-    }
-    discoverySnapshotRef.current = { mobileDigits, leadId: found.id };
+        if (!found) {
+          setDiscoveredLead(null);
+          setShowAlert(false);
+          setInfluencerReadOnly(false);
+          discoverySnapshotRef.current = null;
+          return;
+        }
 
-    const values = mapLeadToFormValues(found, infList);
-    setDiscoveredLead(found);
-    setShowAlert(true);
-    setInfluencerReadOnly(true);
-    reset(values);
-    setSelectMountKey((k) => k + 1);
+        const snap = discoverySnapshotRef.current;
+        if (snap && snap.mobileDigits === mobileDigits && snap.leadId === found.id) {
+          return;
+        }
+        discoverySnapshotRef.current = { mobileDigits, leadId: found.id };
+
+        const values = mapLeadToFormValues(found, infList);
+        setDiscoveredLead(found);
+        setShowAlert(true);
+        setInfluencerReadOnly(true);
+        reset(values);
+        setSelectMountKey((k) => k + 1);
+      };
+      void run();
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [bootstrap, mobile, initialData?.id, reset]);
 
   const currentSourceCode = watch('sourceCode');
@@ -321,6 +340,15 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         return;
       }
 
+      const isCreateLead = !originalLead && !discoveredLead;
+      if (isCreateLead && !data.followUpDate) {
+        setError('followUpDate', {
+          type: 'manual',
+          message: 'Follow-up date is required when creating a new lead.',
+        });
+        return;
+      }
+
       const ratingNum = data.rating != null ? Number(data.rating) : undefined;
 
       const payload: any = {
@@ -344,6 +372,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         gstCustomer: ['YES', 'APPLIED', 'APPLIED_THROUGH_US'].includes(data.gstStatus || 'NO'),
         paymentInfoShared: data.paymentInfoShared,
         followUpDate: data.followUpDate ? data.followUpDate.toISOString() : null,
+        contactAttempts: Math.max(0, Math.floor(Number(data.contactAttempts) || 0)),
       };
 
       console.log('🚀 Preparing to save lead. ID:', originalLead?.id || 'NEW');
@@ -411,9 +440,8 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const handleConfirm = async () => {
     setShowConfirmDialog(false);
     // Ensure store is updated before navigating
-    const { loadLeads, loadSales } = useStore.getState();
+    const { loadLeads } = useStore.getState();
     await loadLeads();
-    await loadSales();
     if (onSuccess) {
       onSuccess();
     } else {
@@ -447,6 +475,84 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
           </AlertDescription>
         </Alert>
       )}
+
+      {!isEditingExistingLead && (
+        <Card className="border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 dark:border-blue-900/50 shadow-sm">
+          <CardHeader className="py-4 px-5 pb-2">
+            <div className="flex items-start gap-3">
+              <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+              <div>
+                <CardTitle className="text-sm font-semibold text-foreground">
+                  Follow-up date is required
+                </CardTitle>
+                <CardDescription className="text-sm mt-1">
+                  Pick a follow-up date before saving a new lead so it appears on your follow-up queue.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+        </Card>
+      )}
+
+      {isEditingExistingLead && (
+        <Card className="border border-border bg-muted/30 shadow-sm">
+          <CardHeader className="py-4 px-5 pb-2">
+            <CardTitle className="text-sm font-semibold">Contact attempts</CardTitle>
+            <CardDescription className="text-sm">
+              Update how many times you have tried to reach this client (missed calls, no answer, follow-ups).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-5 pt-0 space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                aria-label="Decrease attempts"
+                onClick={() =>
+                  setValue('contactAttempts', Math.max(0, contactAttempts - 1), {
+                    shouldDirty: true,
+                  })
+                }
+              >
+                <Minus className="h-4 w-4" />
+              </Button>
+              <Input
+                type="number"
+                min={0}
+                max={999}
+                className="h-10 w-24 text-center font-semibold tabular-nums"
+                {...register('contactAttempts', { valueAsNumber: true })}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 shrink-0"
+                aria-label="Increase attempts"
+                onClick={() =>
+                  setValue('contactAttempts', Math.min(999, contactAttempts + 1), {
+                    shouldDirty: true,
+                  })
+                }
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {contactAttempts === 1 ? '1 attempt recorded' : `${contactAttempts} attempts recorded`}
+              </span>
+            </div>
+            {contactAttempts >= 5 && (
+              <p className="text-sm text-amber-800 dark:text-amber-200/90 bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 rounded-md px-3 py-2">
+                This lead has 5 or more contact attempts recorded. No action is required from you now; admins will
+                review these leads in a dedicated view later.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
         <div className="space-y-2">
@@ -727,14 +833,21 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Follow-up Date</label>
+          <label className="text-sm font-medium">
+            Follow-up Date
+            {!isEditingExistingLead && (
+              <span className="text-destructive"> *</span>
+            )}
+          </label>
           <Popover key={`followUp-${selectMountKey}`}>
             <PopoverTrigger asChild>
               <Button
                 variant="outline"
+                type="button"
                 className={cn(
                   'w-full justify-start text-left font-normal',
-                  !followUpDate && 'text-muted-foreground'
+                  !followUpDate && 'text-muted-foreground',
+                  errors.followUpDate && 'border-destructive border-2'
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
@@ -750,6 +863,9 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
               />
             </PopoverContent>
           </Popover>
+          {errors.followUpDate && (
+            <p className="text-sm text-red-600 font-medium">{errors.followUpDate.message}</p>
+          )}
         </div>
 
         <div className="space-y-2">

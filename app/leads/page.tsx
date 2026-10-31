@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
+import { isFollowUpDueOnOrBeforeToday } from '@/lib/lead-reporting';
 import {
   Dialog,
   DialogContent,
@@ -99,14 +100,13 @@ function LeadsContent() {
   const filteredLeads = useMemo(() => {
     let filtered = [...leads];
 
-    // Priority 1: Today's Follow-up Mode (followup_date = today AND status != converted)
+    // Priority 1: Follow-up queue — today + overdue (carry-forward until rescheduled or converted)
     if (showTodayFollowUp) {
-      const todayStr = new Date().toDateString();
-      filtered = filtered.filter(l => {
-        if (l.converted) return false;
-        if (!l.followUpDate) return false;
-        // Compare by local date string to ignore time components
-        return new Date(l.followUpDate).toDateString() === todayStr;
+      filtered = filtered.filter((l) => isFollowUpDueOnOrBeforeToday(l));
+      filtered.sort((a, b) => {
+        const da = new Date(a.followUpDate!).getTime();
+        const db = new Date(b.followUpDate!).getTime();
+        return da - db;
       });
     }
 
@@ -116,8 +116,8 @@ function LeadsContent() {
       filtered = filtered.filter(l => l.name.toLowerCase().includes(q) || l.mobile.includes(q));
     }
 
-    // 2. Creation Date range filter (createdAt)
-    if (dateRange.from || dateRange.to) {
+    // 2. Creation Date range filter (createdAt) — skip in follow-up queue so overdue leads are not hidden
+    if (!showTodayFollowUp && (dateRange.from || dateRange.to)) {
       filtered = filtered.filter(l => {
         const createdDate = new Date(l.createdAt);
         createdDate.setHours(0, 0, 0, 0);
@@ -272,10 +272,12 @@ function LeadsContent() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-4xl font-bold tracking-tight mb-2">
-              {showTodayFollowUp ? "Today's Follow-ups" : "Leads"}
+              {showTodayFollowUp ? 'Follow-ups due' : 'Leads'}
             </h1>
             <p className="text-muted-foreground">
-              {showTodayFollowUp ? "Managing leads scheduled for today" : "Manage and track your leads"}
+              {showTodayFollowUp
+                ? 'Today and overdue follow-ups until you reschedule or convert'
+                : 'Manage and track your leads'}
             </p>
           </div>
         </div>
@@ -530,14 +532,14 @@ function LeadsContent() {
               <div className="mb-6 flex items-center gap-2 animate-in fade-in slide-in-from-top-1 px-6 pt-2">
                 <Badge className="bg-blue-600 text-white hover:bg-blue-700 px-3 py-1 flex items-center gap-2">
                   <LucideCalendar className="h-3 w-3" />
-                  Viewing: Today&apos;s Follow-ups
+                  Viewing: Follow-ups due
                   <X 
                     className="h-3 w-3 cursor-pointer ml-1 hover:text-red-200" 
                     onClick={() => setShowTodayFollowUp(false)} 
                   />
                 </Badge>
                 <span className="text-xs text-muted-foreground italic">
-                  Showing only leads scheduled for follow-up on {format(new Date(), 'MMM dd, yyyy')}
+                  Today and overdue follow-ups (oldest first); 1★ leads excluded
                 </span>
               </div>
             )}

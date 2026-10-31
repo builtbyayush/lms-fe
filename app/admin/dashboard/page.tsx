@@ -47,6 +47,8 @@ import {
   effectiveConversionDate,
   isConversionInDateRange,
   isCreatedInDateRange,
+  isFollowUpDueOnOrBeforeToday,
+  mergeKpiWithLeadFallback,
 } from '@/lib/lead-reporting';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
@@ -113,10 +115,12 @@ export default function AdminDashboardPage() {
   }, [fetchAdminKpiSummary]);
 
   useEffect(() => {
-    loadLeads();
-    loadSales();
-    loadInfluencers();
-    loadUsers();
+    void (async () => {
+      await loadLeads();
+      await loadSales();
+      loadInfluencers();
+      loadUsers();
+    })();
   }, [loadLeads, loadSales, loadInfluencers, loadUsers]);
 
   const [auditMonth, setAuditMonth] = useState(new Date());
@@ -322,8 +326,14 @@ export default function AdminDashboardPage() {
   const conversionRate = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
   const clientTotalSales = filteredSales.length;
   const clientTotalRevenue = filteredSales.reduce((sum, s) => sum + s.amount, 0);
-  const totalSales = adminKpiSummary?.totalSales ?? clientTotalSales;
-  const totalRevenue = adminKpiSummary?.totalRevenue ?? clientTotalRevenue;
+  const totalSales = mergeKpiWithLeadFallback(
+    adminKpiSummary?.totalSales,
+    clientTotalSales,
+  );
+  const totalRevenue = mergeKpiWithLeadFallback(
+    adminKpiSummary?.totalRevenue,
+    clientTotalRevenue,
+  );
   // GST % = (pending leads with GST YES/APPLIED / total pending leads) * 100 — only non-converted
   const isGstLead = (l: { gstStatus?: string; gstCustomer?: boolean; gst?: boolean }) =>
     l.gstStatus === 'YES' || l.gstStatus === 'APPLIED' || l.gstStatus === 'APPLIED_THROUGH_US' || l.gstCustomer === true || l.gst === true;
@@ -342,18 +352,10 @@ export default function AdminDashboardPage() {
     }).length;
   }, [leads]);
 
-  const todayFollowUps = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return leads.filter(l => {
-      if (l.converted) return false;
-      if (!l.followUpDate) return false;
-      const fDate = new Date(l.followUpDate);
-      fDate.setHours(0, 0, 0, 0);
-      return fDate.getTime() === today.getTime();
-    });
-  }, [leads]);
+  const todayFollowUps = useMemo(
+    () => leads.filter((l) => isFollowUpDueOnOrBeforeToday(l)),
+    [leads],
+  );
 
   const handleCardClick = (type: 'leads' | 'sales' | 'influencers') => {
     if (type === 'leads') router.push('/leads');

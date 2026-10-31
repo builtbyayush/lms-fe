@@ -51,3 +51,39 @@ export function isCreatedInDateRange(
   }
   return true;
 }
+
+/** Local calendar day at midnight (no time component). */
+export function localCalendarDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+/**
+ * Non-converted lead with a follow-up on or before today (includes overdue / carry-forward).
+ * 1★ leads are excluded — treated as not interested and not part of the daily follow-up queue.
+ */
+/**
+ * Admin/sales KPI cards: prefer API (Sale collection) when it reports activity;
+ * if API returns 0 but client derived converted rows from leads, use client (legacy sync).
+ */
+export function mergeKpiWithLeadFallback(
+  apiValue: number | undefined,
+  clientValue: number,
+): number {
+  if (apiValue != null && apiValue > 0) return apiValue;
+  if (clientValue > 0) return clientValue;
+  return apiValue ?? clientValue ?? 0;
+}
+
+export function isFollowUpDueOnOrBeforeToday(lead: {
+  followUpDate: string | null;
+  converted: boolean;
+  rating?: number | null;
+}): boolean {
+  if (lead.converted || !lead.followUpDate) return false;
+  if (lead.rating === 1) return false;
+  const due = localCalendarDay(new Date(lead.followUpDate));
+  const today = localCalendarDay(new Date());
+  return due.getTime() <= today.getTime();
+}

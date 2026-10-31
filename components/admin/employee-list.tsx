@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { useStore } from '@/store';
 import { API_BASE_URL } from '@/lib/api';
@@ -320,12 +321,12 @@ export function EmployeeList({ employees, loading, onRefresh }: EmployeeListProp
                     Reset Password
                 </Label>
                 <div className="relative">
-                    <Input
+                    <PasswordInput
                         id="edit-password"
-                        type="text"
                         placeholder="Enter new password (optional)"
                         value={editFormData.password}
                         onChange={(e) => setEditFormData(prev => ({...prev, password: e.target.value}))}
+                        autoComplete="new-password"
                         className="pl-9"
                     />
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />

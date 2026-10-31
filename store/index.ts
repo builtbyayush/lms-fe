@@ -3,6 +3,17 @@ import { persist } from 'zustand/middleware';
 import { Lead, Sale, Interaction, Influencer, DateRange, User, Role, EmployeeSales } from '@/types';
 import { fakeApi } from '@/services/fakeApi';
 import { API_BASE_URL, parseApiError } from '@/lib/api';
+import { mapLeadsFromApi, salesFromLeads } from '@/lib/lead-api-map';
+
+/** Coalesce parallel loadLeads calls with identical query options. */
+const inflightLeadsLoads = new Map<string, Promise<void>>();
+
+function leadsLoadKey(opts?: {
+  salesExecutiveId?: string;
+  paymentInfoShared?: 'true' | 'false';
+}): string {
+  return JSON.stringify(opts ?? {});
+}
 
 interface Store {
   user: User | null;
@@ -182,79 +193,57 @@ export const useStore = create<Store>()(
         },
 
         loadLeads: async (opts) => {
+          const key = leadsLoadKey(opts);
+          const existing = inflightLeadsLoads.get(key);
+          if (existing) return existing;
+
+          const task = (async () => {
+            try {
+              let url = `${API_BASE_URL}/sales/leads`;
+              const params = new URLSearchParams();
+              if (opts?.salesExecutiveId) {
+                params.set('salesExecutiveId', opts.salesExecutiveId);
+              }
+              if (opts?.paymentInfoShared !== undefined) {
+                params.set('paymentInfoShared', opts.paymentInfoShared);
+              }
+              const qs = params.toString();
+              if (qs) {
+                url += `?${qs}`;
+              }
+
+              const response = await authFetch(url);
+              if (!response.ok) return;
+              const data = await response.json();
+              const cleanData = mapLeadsFromApi(data);
+
+              set({
+                leads: cleanData,
+                sales: salesFromLeads(cleanData),
+              });
+            } catch (error) {
+              console.error('Error loading leads:', error);
+            }
+          })();
+
+          inflightLeadsLoads.set(key, task);
           try {
-            let url = `${API_BASE_URL}/sales/leads`;
-            const params = new URLSearchParams();
-            if (opts?.salesExecutiveId) {
-              params.set('salesExecutiveId', opts.salesExecutiveId);
+            await task;
+          } finally {
+            if (inflightLeadsLoads.get(key) === task) {
+              inflightLeadsLoads.delete(key);
             }
-            if (opts?.paymentInfoShared !== undefined) {
-              params.set('paymentInfoShared', opts.paymentInfoShared);
-            }
-            const qs = params.toString();
-            if (qs) {
-              url += `?${qs}`;
-            }
-
-            const response = await authFetch(url);
-            if (!response.ok) return;
-            const data = await response.json();
-
-            const toId = (v: unknown) => {
-              if (v == null) return '';
-              if (typeof v === 'string') return v;
-              if (typeof v === 'object' && v !== null && '$oid' in v) return String((v as { $oid?: string }).$oid || '');
-              if (typeof (v as any)?.toString === 'function') return (v as any).toString();
-              return String(v);
-            };
-            const cleanData = Array.isArray(data) ? data.map((l: any) => ({
-              ...l,
-              id: String(l.id || l._id),
-              createdBy: toId(l.createdBy) || l.createdBy,
-              conversionDate: l.conversionDate != null ? String(l.conversionDate) : l.conversionDate,
-              paymentInfoShared:
-                l.paymentInfoShared === true ||
-                l.paymentInfoShared === 'true' ||
-                String(l.paymentInfoShared) === 'true',
-              gstCustomer: l.gstStatus !== undefined ? (l.gstStatus === 'YES' || l.gstStatus === 'APPLIED' || l.gstStatus === 'APPLIED_THROUGH_US') :
-                (l.gstCustomer !== undefined ? l.gstCustomer :
-                  (l.gst !== undefined ? l.gst : false)),
-              gstStatus: l.gstStatus,
-            })) : [];
-
-            set({ leads: cleanData });
-          } catch (error) {
-            console.error('Error loading leads:', error);
           }
         },
 
+        /** Derives sales from in-memory leads (no second full /sales/leads download). */
         loadSales: async () => {
-          try {
-            const url = `${API_BASE_URL}/sales/leads`;
-            const response = await authFetch(url);
-            if (!response.ok) return;
-            const data = await response.json();
-            const isTrue = (val: any) => val === true || val === 'true' || val === 1 || val === '1';
-
-            const salesData: Sale[] = Array.isArray(data) ? data
-              .filter((item: any) => isTrue(item.converted) || Number(item.salesAmount || item.amount || 0) > 0)
-              .map((item: any) => ({
-                id: String(item.id || item._id),
-                leadId: String(item.id || item._id),
-                influencerId: item.influencerId || '',
-                amount: Number(item.salesAmount || item.amount || 0),
-                gst: (item.gstStatus === 'YES' || item.gstStatus === 'APPLIED' || item.gstStatus === 'APPLIED_THROUGH_US') || item.gst === true || item.gst === 'true' || item.gstCustomer === true || String(item.gstCustomer) === 'true',
-                // Prefer the true conversion moment; fall back to createdAt so date-range
-                // filters stay stable when a converted lead is later edited (saleDate must
-                // not drift with lead.updatedAt, otherwise revenue windows break).
-                saleDate: item.conversionDate || item.createdAt || item.updatedAt || new Date().toISOString(),
-                createdAt: item.createdAt || new Date().toISOString()
-              })) : [];
-
-            set({ sales: salesData });
-          } catch (error) {
-            console.error('Error loading sales:', error);
+          const { leads } = get();
+          if (leads.length === 0) {
+            await get().loadLeads();
+            return;
           }
+          set({ sales: salesFromLeads(leads) });
         },
 
         loadInteractions: async () => {
@@ -303,7 +292,6 @@ export const useStore = create<Store>()(
               throw new Error(message);
             }
             await get().loadLeads();
-            await get().loadSales();
           } catch (error) {
             console.error('Update lead error:', error);
             throw error;
@@ -317,7 +305,6 @@ export const useStore = create<Store>()(
             });
             if (!response.ok) throw new Error('Failed to delete lead');
             await get().loadLeads();
-            await get().loadSales();
           } catch (error) {
             console.error('Delete lead error:', error);
             throw error;
@@ -326,7 +313,6 @@ export const useStore = create<Store>()(
 
         addSale: async (sale) => {
           await fakeApi.createSale(sale);
-          await get().loadSales();
           await get().loadLeads();
         },
 

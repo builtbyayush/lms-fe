@@ -5,6 +5,7 @@ import { API_BASE_URL } from '@/lib/api';
 import { Lead } from '@/types';
 import { useStore } from '@/store';
 import { coerceFollowUpToIsoString, extractId } from '@/lib/lead-form-map';
+import { mapLeadFromApi } from '@/lib/lead-api-map';
 
 export type LeadFormBootstrapState =
   | { status: 'loading' }
@@ -12,23 +13,22 @@ export type LeadFormBootstrapState =
   | { status: 'ready'; lead: Lead | null };
 
 function normalizeLeadFromApi(raw: Record<string, unknown>): Lead {
+  const base = mapLeadFromApi(raw);
   return {
-    ...(raw as unknown as Lead),
-    id: String(raw.id ?? raw._id),
+    ...base,
     influencerId: extractId(raw.influencerId),
     followUpDate: coerceFollowUpToIsoString(raw.followUpDate) as Lead['followUpDate'],
-  } as Lead;
+  };
 }
 
 /**
- * Loads reference data (users, influencers, leads list) and optionally the lead being edited.
- * Use this to gate rendering LeadForm until dropdown options and lead row are consistent.
+ * Loads reference data (users, influencers) and optionally the lead being edited.
+ * Avoids downloading the full leads list — audit/add flows use by-mobile or :id instead.
  */
 export function useLeadFormBootstrap(leadId: string | undefined): LeadFormBootstrapState {
   const [state, setState] = useState<LeadFormBootstrapState>({ status: 'loading' });
   const loadUsers = useStore((s) => s.loadUsers);
   const loadInfluencers = useStore((s) => s.loadInfluencers);
-  const loadLeads = useStore((s) => s.loadLeads);
   const token = useStore((s) => s.token);
 
   const runGenerationRef = useRef(0);
@@ -50,9 +50,7 @@ export function useLeadFormBootstrap(leadId: string | undefined): LeadFormBootst
         // user out before loadInfluencers() runs — the form would never get dropdown data.
         const isAdmin = useStore.getState().role === 'ADMIN';
         await Promise.all(
-          isAdmin
-            ? [loadUsers(), loadInfluencers(), loadLeads()]
-            : [loadInfluencers(), loadLeads()],
+          isAdmin ? [loadUsers(), loadInfluencers()] : [loadInfluencers()],
         );
         if (cancelled || gen !== runGenerationRef.current) return;
 
@@ -90,7 +88,7 @@ export function useLeadFormBootstrap(leadId: string | undefined): LeadFormBootst
     return () => {
       cancelled = true;
     };
-  }, [key, leadId, loadUsers, loadInfluencers, loadLeads, token]);
+  }, [key, leadId, loadUsers, loadInfluencers, token]);
 
   return state;
 }

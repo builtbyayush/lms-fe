@@ -28,6 +28,8 @@ import {
   effectiveConversionDate,
   isConversionInDateRange,
   isCreatedInDateRange,
+  isFollowUpDueOnOrBeforeToday,
+  mergeKpiWithLeadFallback,
 } from '@/lib/lead-reporting';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
@@ -321,10 +323,12 @@ export default function SalesDashboardPage() {
   const clientTotalRevenue = filteredSales.reduce((sum, s) => sum + s.amount, 0);
   const hasDateFilter = Boolean(dateRange?.from || dateRange?.to);
   /** All-time KPIs use API totals (your salesExecutiveId only); date filter uses client slice */
-  const totalSales = hasDateFilter ? clientTotalSales : (execSummary?.totalSales ?? clientTotalSales);
+  const totalSales = hasDateFilter
+    ? clientTotalSales
+    : mergeKpiWithLeadFallback(execSummary?.totalSales, clientTotalSales);
   const totalRevenue = hasDateFilter
     ? clientTotalRevenue
-    : (execSummary?.totalRevenue ?? clientTotalRevenue);
+    : mergeKpiWithLeadFallback(execSummary?.totalRevenue, clientTotalRevenue);
   // GST % = (pending leads with GST YES/APPLIED / total pending leads) * 100 — only non-converted
   const isGstLead = (l: { gstStatus?: string; gstCustomer?: boolean; gst?: boolean }) =>
     l.gstStatus === 'YES' || l.gstStatus === 'APPLIED' || l.gstStatus === 'APPLIED_THROUGH_US' || l.gstCustomer === true || l.gst === true;
@@ -355,18 +359,10 @@ export default function SalesDashboardPage() {
     router.push(`/leads?${params.toString()}`);
   };
 
-  const todayFollowUps = useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return leads.filter(l => {
-      if (l.converted) return false;
-      if (!l.followUpDate) return false;
-      const fDate = new Date(l.followUpDate);
-      fDate.setHours(0, 0, 0, 0);
-      return fDate.getTime() === today.getTime();
-    });
-  }, [leads]);
+  const todayFollowUps = useMemo(
+    () => leads.filter((l) => isFollowUpDueOnOrBeforeToday(l)),
+    [leads],
+  );
 
   return (
     <MainLayout>

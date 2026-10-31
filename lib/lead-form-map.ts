@@ -93,6 +93,7 @@ export type LeadFormValues = {
   rating: number | null;
   notes: string;
   followUpDate: Date | null;
+  contactAttempts: number;
   converted: boolean;
   salesAmount: number | null;
   gstStatus: GstStatus;
@@ -160,6 +161,10 @@ export function mapLeadToFormValues(lead: Lead, influencers: Influencer[]): Lead
     rating: lead.rating ?? null,
     notes: String(lead.notes || ''),
     followUpDate: fDate,
+    contactAttempts:
+      typeof lead.contactAttempts === 'number' && lead.contactAttempts >= 0
+        ? lead.contactAttempts
+        : 0,
     converted: isConverted,
     salesAmount: backendAmount || null,
     gstStatus: resolvedGst,
