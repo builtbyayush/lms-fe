@@ -1,14 +1,37 @@
-name: Frontend Docker Build and Push
+# Build lms-fe, push iamcyberster/lms-fe:latest to Docker Hub, then SSH to EC2 to pull and recreate lms-fe.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   DOCKERHUB_USERNAME   — iamcyberster (or legacy DOCKER_USERNAME)
+#   DOCKERHUB_TOKEN      — or legacy DOCKER_PASSWORD
+#   EC2_SSH_HOST
+#   EC2_SSH_USER
+#   EC2_SSH_PRIVATE_KEY
+#
+# Repository variable (Settings → Variables → Actions):
+#   NEXT_PUBLIC_API_BASE_URL — e.g. /api (same-origin via nginx)
+
+name: Frontend Docker Build and Deploy
 
 on:
   push:
     branches:
       - main
+      - master
   workflow_dispatch:
 
+env:
+  IMAGE_NAME: iamcyberster/lms-fe
+  IMAGE_TAG: latest
+  FE_CONTAINER: lms-fe
+  FE_HOST_PORT: "3001"
+  FE_CONTAINER_PORT: "3000"
+
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: Checkout code
@@ -17,20 +40,58 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
 
-      # Set repository variable `NEXT_PUBLIC_API_BASE_URL` to `/api` for same-origin HTTPS routing.
-      # Nginx should proxy https://lms.ziloty.in/api/ to the backend container.
-      - name: Build and Push Docker image
+      - name: Build and push Docker image (linux/amd64)
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/lms-fe:latest
-          no-cache: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           build-args: |
-            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL || '/api' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: echo "Image pushed with digest ${{ steps.build.outputs.digest }}"
+
+  deploy-ec2:
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pull on EC2 and recreate lms-fe
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          FE_CONTAINER: ${{ env.FE_CONTAINER }}
+          FE_HOST_PORT: ${{ env.FE_HOST_PORT }}
+          FE_CONTAINER_PORT: ${{ env.FE_CONTAINER_PORT }}
+        with:
+          host: ${{ secrets.EC2_SSH_HOST }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: IMAGE_NAME,IMAGE_TAG,FE_CONTAINER,FE_HOST_PORT,FE_CONTAINER_PORT
+          script_stop: true
+          script: |
+            set -euo pipefail
+            echo "Pulling ${IMAGE_NAME}:${IMAGE_TAG} from Docker Hub..."
+            docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Recreating ${FE_CONTAINER} (host :${FE_HOST_PORT} → container :${FE_CONTAINER_PORT})..."
+            docker rm -f "${FE_CONTAINER}" 2>/dev/null || true
+            docker run -d \
+              --name "${FE_CONTAINER}" \
+              -p "${FE_HOST_PORT}:${FE_CONTAINER_PORT}" \
+              --restart unless-stopped \
+              "${IMAGE_NAME}:${IMAGE_TAG}"
+            docker ps --filter "name=${FE_CONTAINER}"
+            echo "Frontend deploy complete."

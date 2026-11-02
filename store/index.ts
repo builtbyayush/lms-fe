@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { Lead, Sale, Interaction, Influencer, DateRange, User, Role, EmployeeSales } from '@/types';
 import { fakeApi } from '@/services/fakeApi';
 import { API_BASE_URL, parseApiError } from '@/lib/api';
-import { mapLeadsFromApi, salesFromLeads } from '@/lib/lead-api-map';
+import { mapLeadFromApi, mapLeadsFromApi, salesFromLeads } from '@/lib/lead-api-map';
 
 /** Coalesce parallel loadLeads calls with identical query options. */
 const inflightLeadsLoads = new Map<string, Promise<void>>();
@@ -59,6 +59,7 @@ interface Store {
 
   addLead: (lead: Omit<Lead, 'id' | 'createdAt'>) => Promise<Lead>;
   updateLead: (id: string, updates: Partial<Lead>) => Promise<void>;
+  logContactAttempt: (leadId: string) => Promise<Lead>;
   deleteLead: (id: string) => Promise<void>;
 
   addSale: (sale: Omit<Sale, 'id' | 'createdAt'>) => Promise<void>;
@@ -283,9 +284,13 @@ export const useStore = create<Store>()(
 
         updateLead: async (id, updates) => {
           try {
+            const { contactAttempts: _omit, contactAttemptLoggedToday: _omit2, ...rest } =
+              updates as Partial<Lead>;
+            void _omit;
+            void _omit2;
             const response = await authFetch(`${API_BASE_URL}/sales/leads/${id}`, {
               method: 'PATCH',
-              body: JSON.stringify(updates),
+              body: JSON.stringify(rest),
             });
             if (!response.ok) {
               const message = await parseApiError(response);
@@ -296,6 +301,23 @@ export const useStore = create<Store>()(
             console.error('Update lead error:', error);
             throw error;
           }
+        },
+
+        logContactAttempt: async (leadId) => {
+          const response = await authFetch(
+            `${API_BASE_URL}/sales/leads/${leadId}/contact-attempts`,
+            { method: 'POST' },
+          );
+          if (!response.ok) {
+            const message = await parseApiError(response);
+            throw new Error(message);
+          }
+          const raw = (await response.json()) as Record<string, unknown>;
+          const updated = mapLeadFromApi(raw);
+          set((state) => ({
+            leads: state.leads.map((l) => (l.id === leadId ? { ...l, ...updated } : l)),
+          }));
+          return updated;
         },
 
         deleteLead: async (id) => {

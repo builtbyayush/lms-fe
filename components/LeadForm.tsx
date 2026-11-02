@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useStore } from '@/store';
 import { format } from 'date-fns';
-import { CalendarIcon, Star, CheckCircle, Loader2, Info, Minus, Plus } from 'lucide-react';
+import { CalendarIcon, Star, CheckCircle, Loader2, Info, PhoneCall } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Influencer, Lead } from '@/types';
 import { cn } from '@/lib/utils';
@@ -60,7 +60,6 @@ const leadSchema = z.object({
   rating: z.number().min(1).max(5).nullable().optional(),
   notes: z.string().min(1, 'Notes are required'),
   followUpDate: z.date().nullable().optional(),
-  contactAttempts: z.coerce.number().int().min(0).max(999),
   converted: z.boolean(),
   salesAmount: z.number().min(0).optional().nullable(),
   gstStatus: z.enum(gstStatuses).default('NO'),
@@ -79,7 +78,7 @@ interface LeadFormProps {
 
 export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, showCardWrapper = true }: LeadFormProps) {
   const router = useRouter();
-  const { influencers, addLead, updateLead, loadLeads, role } = useStore();
+  const { influencers, addLead, updateLead, logContactAttempt, loadLeads, role } = useStore();
   const bootstrap = useLeadFormBootstrap(initialData?.id);
 
   const [originalLead, setOriginalLead] = useState<Lead | null>(null);
@@ -87,6 +86,8 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const [showAlert, setShowAlert] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [attemptError, setAttemptError] = useState<string | null>(null);
+  const [attemptLogging, setAttemptLogging] = useState(false);
   const [influencerReadOnly, setInfluencerReadOnly] = useState(false);
   /** Bumped after RHF `reset` so Radix Select trees remount and pick up programmatic values. */
   const [selectMountKey, setSelectMountKey] = useState(0);
@@ -147,7 +148,6 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       rating: null,
       notes: '',
       followUpDate: null,
-      contactAttempts: 0,
       converted: false,
       salesAmount: null,
       gstStatus: 'NO',
@@ -158,10 +158,6 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const mobile = watch('mobile');
   const converted = watch('converted');
   const followUpDate = watch('followUpDate');
-  const contactAttempts = Math.max(
-    0,
-    Math.min(999, Math.floor(Number(watch('contactAttempts') ?? 0) || 0)),
-  );
   const rating = watch('rating');
   const gstStatus = watch('gstStatus');
   const paymentInfoShared = watch('paymentInfoShared');
@@ -231,7 +227,6 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       rating: null,
       notes: '',
       followUpDate: null,
-      contactAttempts: 0,
       converted: false,
       salesAmount: null,
       gstStatus: 'NO',
@@ -331,6 +326,29 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
     Boolean(initialData?.id) || Boolean(originalLead?.id) || Boolean(discoveredLead?.id);
   const isMobileReadOnly = role !== 'ADMIN' && isEditingExistingLead;
 
+  const attemptLead: Lead | null =
+    originalLead ?? discoveredLead ?? (bootstrap.status === 'ready' ? bootstrap.lead : null);
+  const editingLeadId = attemptLead?.id;
+  const contactAttempts = Math.max(0, Math.floor(Number(attemptLead?.contactAttempts ?? 0)));
+  const contactAttemptLoggedToday = !!attemptLead?.contactAttemptLoggedToday;
+
+  const handleLogContactAttempt = async () => {
+    if (!editingLeadId) return;
+    setAttemptError(null);
+    setAttemptLogging(true);
+    try {
+      const updated = await logContactAttempt(editingLeadId);
+      if (originalLead?.id === editingLeadId) setOriginalLead(updated);
+      if (discoveredLead?.id === editingLeadId) setDiscoveredLead(updated);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Could not log contact attempt.';
+      setAttemptError(message);
+    } finally {
+      setAttemptLogging(false);
+    }
+  };
+
   const onSubmit = async (data: LeadFormData) => {
     try {
       let savedLead: Lead;
@@ -375,7 +393,6 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         gstCustomer: ['YES', 'APPLIED', 'APPLIED_THROUGH_US'].includes(data.gstStatus || 'NO'),
         paymentInfoShared: data.paymentInfoShared,
         followUpDate: data.followUpDate ? data.followUpDate.toISOString() : null,
-        contactAttempts: Math.max(0, Math.floor(Number(data.contactAttempts) || 0)),
       };
 
       console.log('🚀 Preparing to save lead. ID:', originalLead?.id || 'NEW');
@@ -502,50 +519,39 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
           <CardHeader className="py-4 px-5 pb-2">
             <CardTitle className="text-sm font-semibold">Contact attempts</CardTitle>
             <CardDescription className="text-sm">
-              Update how many times you have tried to reach this client (missed calls, no answer, follow-ups).
+              Log one attempt when you try to reach this client (call, WhatsApp, follow-up). You can add at most one
+              attempt per lead per day; the total cannot be edited manually.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-5 pb-5 pt-0 space-y-3">
+            {attemptError && (
+              <p className="text-sm text-destructive font-medium">{attemptError}</p>
+            )}
             <div className="flex flex-wrap items-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 shrink-0"
-                aria-label="Decrease attempts"
-                onClick={() =>
-                  setValue('contactAttempts', Math.max(0, contactAttempts - 1), {
-                    shouldDirty: true,
-                  })
-                }
-              >
-                <Minus className="h-4 w-4" />
-              </Button>
-              <Input
-                type="number"
-                min={0}
-                max={999}
-                className="h-10 w-24 text-center font-semibold tabular-nums"
-                {...register('contactAttempts', { valueAsNumber: true })}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 shrink-0"
-                aria-label="Increase attempts"
-                onClick={() =>
-                  setValue('contactAttempts', Math.min(999, contactAttempts + 1), {
-                    shouldDirty: true,
-                  })
-                }
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
+              <span className="text-2xl font-semibold tabular-nums min-w-[2ch]">{contactAttempts}</span>
               <span className="text-sm text-muted-foreground">
-                {contactAttempts === 1 ? '1 attempt recorded' : `${contactAttempts} attempts recorded`}
+                {contactAttempts === 1 ? 'attempt recorded' : 'attempts recorded'}
               </span>
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-2"
+                disabled={contactAttemptLoggedToday || attemptLogging || !editingLeadId}
+                onClick={() => void handleLogContactAttempt()}
+              >
+                {attemptLogging ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PhoneCall className="h-4 w-4" />
+                )}
+                {contactAttemptLoggedToday ? 'Logged for today' : 'Log contact attempt'}
+              </Button>
             </div>
+            {contactAttemptLoggedToday && (
+              <p className="text-sm text-muted-foreground">
+                You already logged an attempt for this lead today. You can log again tomorrow if needed.
+              </p>
+            )}
             {contactAttempts >= 5 && (
               <p className="text-sm text-amber-800 dark:text-amber-200/90 bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 rounded-md px-3 py-2">
                 This lead has 5 or more contact attempts recorded. No action is required from you now; admins will

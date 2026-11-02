@@ -37,8 +37,10 @@ export interface Lead {
   rating: number | null;
   notes?: string;
   followUpDate: string | null;
-  /** Times the team has tried to contact / follow up (updated on lead edit). */
+  /** Total contact attempts logged for this lead (server-managed). */
   contactAttempts?: number;
+  /** Whether the current user already logged an attempt for this lead today (IST). */
+  contactAttemptLoggedToday?: boolean;
   converted: boolean;
   gst?: boolean;
   gstStatus?: 'YES' | 'NO' | 'APPLIED' | 'APPLIED_THROUGH_US';
