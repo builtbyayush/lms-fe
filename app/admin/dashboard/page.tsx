@@ -49,6 +49,7 @@ import {
   isCreatedInDateRange,
   isFollowUpDueToday,
   isFollowUpOverdue,
+  isOpenLead,
   mergeKpiWithLeadFallback,
 } from '@/lib/lead-reporting';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -314,7 +315,8 @@ export default function AdminDashboardPage() {
     });
   }, [sales, dateRange]);
 
-  const totalLeads = filteredLeads.length;
+  const totalLeads = filteredLeads.filter(isOpenLead).length;
+  const leadsInScope = filteredLeads.length;
   const conversionsInSelectedRange = useMemo(() => {
     if (!dateRange?.from && !dateRange?.to) {
       return leads.filter((l) => l.converted).length;
@@ -324,7 +326,8 @@ export default function AdminDashboardPage() {
     ).length;
   }, [leads, sales, dateRange]);
   const convertedLeads = conversionsInSelectedRange;
-  const conversionRate = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
+  const conversionRate =
+    leadsInScope > 0 ? (convertedLeads / leadsInScope) * 100 : 0;
   const clientTotalSales = filteredSales.length;
   const clientTotalRevenue = filteredSales.reduce((sum, s) => sum + s.amount, 0);
   const totalSales = mergeKpiWithLeadFallback(
@@ -363,7 +366,7 @@ export default function AdminDashboardPage() {
   );
 
   const handleCardClick = (type: 'leads' | 'sales' | 'influencers') => {
-    if (type === 'leads') router.push('/leads');
+    if (type === 'leads') router.push('/leads?status=pending');
     else if (type === 'sales') router.push('/sales/sales');
     else if (type === 'influencers') router.push('/admin/influencers');
   };
@@ -371,9 +374,10 @@ export default function AdminDashboardPage() {
   const handleLeadsClick = (options?: { status?: string; view?: string; gst?: string }) => {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
+    else if (!options?.view && !options?.gst) params.set('status', 'pending');
     if (options?.view) params.set('view', options.view);
     if (options?.gst) params.set('gst', options.gst);
-    router.push(params.toString() ? `/leads?${params.toString()}` : '/leads');
+    router.push(`/leads?${params.toString()}`);
   };
 
   return (
@@ -390,11 +394,11 @@ export default function AdminDashboardPage() {
             onClick={() => handleLeadsClick()}
           >
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide text-blue-600">Total Leads (All)</CardTitle>
+              <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide text-blue-600">Total Leads</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-black mb-1">{totalLeads}</div>
-              <p className="text-xs text-muted-foreground font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">System-wide, all sales executives</p>
+              <p className="text-xs text-muted-foreground font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">Open leads only (excludes converted)</p>
             </CardContent>
           </Card>
 

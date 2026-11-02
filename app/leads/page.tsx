@@ -13,7 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Lead } from '@/types';
 import { useStore } from '@/store';
 import { format } from 'date-fns';
-import { User, Phone, MapPin, Star, Calendar as LucideCalendar, CheckCircle, Clock, Pencil, Trash2, Search, X, Filter, CalendarIcon } from 'lucide-react';
+import { User, Phone, MapPin, Star, Calendar as LucideCalendar, CheckCircle, Clock, Pencil, Trash2, Search, X, Filter, CalendarIcon, Loader2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { LeadForm } from '@/components/LeadForm';
@@ -22,9 +23,12 @@ import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
 import {
+  isCreatedInDateRange,
   isFollowUpDueToday,
   isFollowUpOverdue,
 } from '@/lib/lead-reporting';
+import { useReportingDateRange } from '@/hooks/useReportingDateRange';
+import { isEmployeeScopedView } from '@/lib/employee-month-scope';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -37,7 +41,11 @@ import {
 
 
 function LeadsContent() {
-  const { leads, dateRange, deleteLead, loadLeads, influencers, loadInfluencers, users, loadUsers, role } = useStore();
+  const { leads, dateRange, deleteLead, deleteLeadsBulk, loadLeads, influencers, loadInfluencers, users, loadUsers, role } = useStore();
+  const isAdmin = role === 'ADMIN';
+  const employeeView = isEmployeeScopedView(role);
+  const reportingRange = useReportingDateRange();
+  const tableColSpan = isAdmin ? 11 : 9;
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -47,7 +55,7 @@ function LeadsContent() {
     loadUsers();
   }, [loadLeads, loadInfluencers, loadUsers]);
   
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('pending');
   const [ratingFilter, setRatingFilter] = useState<string>('all');
   const [nameFilter, setNameFilter] = useState<string>('');
   const [mobileFilter, setMobileFilter] = useState<string>('');
@@ -71,7 +79,9 @@ function LeadsContent() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(() => new Set());
   const [viewingLead, setViewingLead] = useState<Lead | null>(null);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
 
@@ -86,6 +96,9 @@ function LeadsContent() {
     const gst = searchParams.get('gst');
     
     if (status) setStatusFilter(status);
+    else if (view !== 'today_followup' && view !== 'overdue_followup') {
+      setStatusFilter('pending');
+    }
     if (rating) setRatingFilter(rating);
     if (view === 'today_followup') setFollowUpTab('today');
     if (view === 'overdue_followup') setFollowUpTab('overdue');
@@ -103,24 +116,31 @@ function LeadsContent() {
     }
   }, [salesPersonFilter, loadLeads]);
 
+  const monthScopedLeads = useMemo(() => {
+    if (!employeeView) return leads;
+    return leads.filter((l) =>
+      isCreatedInDateRange(l, reportingRange.from, reportingRange.to),
+    );
+  }, [leads, employeeView, reportingRange.from, reportingRange.to]);
+
   const followUpTodayCount = useMemo(
-    () => leads.filter((l) => isFollowUpDueToday(l)).length,
-    [leads],
+    () => monthScopedLeads.filter((l) => isFollowUpDueToday(l)).length,
+    [monthScopedLeads],
   );
   const followUpOverdueCount = useMemo(
-    () => leads.filter((l) => isFollowUpOverdue(l)).length,
-    [leads],
+    () => monthScopedLeads.filter((l) => isFollowUpOverdue(l)).length,
+    [monthScopedLeads],
   );
 
   const setFollowUpView = (tab: 'today' | 'overdue' | null) => {
     setFollowUpTab(tab);
     if (tab === 'today') router.replace('/leads?view=today_followup');
     else if (tab === 'overdue') router.replace('/leads?view=overdue_followup');
-    else router.replace('/leads');
+    else router.replace('/leads?status=pending');
   };
 
   const filteredLeads = useMemo(() => {
-    let filtered = [...leads];
+    let filtered = [...(employeeView ? monthScopedLeads : leads)];
 
     if (followUpTab === 'today') {
       filtered = filtered.filter((l) => isFollowUpDueToday(l));
@@ -141,7 +161,7 @@ function LeadsContent() {
     }
 
     // 2. Creation Date range filter (createdAt) — skip in follow-up queue so overdue leads are not hidden
-    if (!followUpTab && (dateRange.from || dateRange.to)) {
+    if (!employeeView && !followUpTab && (dateRange.from || dateRange.to)) {
       filtered = filtered.filter(l => {
         const createdDate = new Date(l.createdAt);
         createdDate.setHours(0, 0, 0, 0);
@@ -244,7 +264,7 @@ function LeadsContent() {
     }
 
     return filtered;
-  }, [leads, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
+  }, [leads, monthScopedLeads, employeeView, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
 
   // Reset pagination whenever the filtered set changes (filter, search, date, etc.).
   useEffect(() => {
@@ -256,13 +276,52 @@ function LeadsContent() {
     [filteredLeads, leadsPage]
   );
 
+  const selectedCount = selectedLeadIds.size;
+  const pageLeadIds = useMemo(() => paginatedLeads.map((l) => l.id), [paginatedLeads]);
+  const allOnPageSelected =
+    pageLeadIds.length > 0 && pageLeadIds.every((id) => selectedLeadIds.has(id));
+  const someOnPageSelected =
+    pageLeadIds.some((id) => selectedLeadIds.has(id)) && !allOnPageSelected;
+
+  const toggleLeadSelected = (leadId: string, checked: boolean) => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(leadId);
+      else next.delete(leadId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllOnPage = (checked: boolean) => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      for (const id of pageLeadIds) {
+        if (checked) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const selectAllFilteredLeads = () => {
+    setSelectedLeadIds(new Set(filteredLeads.map((l) => l.id)));
+  };
+
+  const clearLeadSelection = () => setSelectedLeadIds(new Set());
+
   const handleEditClick = (lead: Lead) => {
     setEditingLead(lead);
     setIsEditDialogOpen(true);
   };
 
   const handleDeleteClick = (id: string) => {
-    setDeleteId(id);
+    setDeleteTargetIds([id]);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const openBulkDeleteDialog = () => {
+    if (selectedCount === 0) return;
+    setDeleteTargetIds([...selectedLeadIds]);
     setIsDeleteDialogOpen(true);
   };
 
@@ -272,14 +331,22 @@ function LeadsContent() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteId) return;
+    if (!deleteTargetIds.length) return;
+    setDeleteInProgress(true);
     try {
-      await deleteLead(deleteId);
+      if (deleteTargetIds.length === 1) {
+        await deleteLead(deleteTargetIds[0]);
+      } else {
+        await deleteLeadsBulk(deleteTargetIds);
+      }
       setIsDeleteDialogOpen(false);
-      setDeleteId(null);
+      setDeleteTargetIds([]);
+      clearLeadSelection();
     } catch (error) {
-      console.error('Failed to delete lead:', error);
-      alert('Failed to delete lead');
+      console.error('Failed to delete lead(s):', error);
+      alert(error instanceof Error ? error.message : 'Failed to delete lead(s)');
+    } finally {
+      setDeleteInProgress(false);
     }
   };
 
@@ -315,7 +382,7 @@ function LeadsContent() {
                 <CardTitle className="text-xl font-semibold">Leads Directory</CardTitle>
                 <p className="text-sm text-muted-foreground mt-1">Filter and view lead details</p>
               </div>
-              {!followUpTab && (
+              {!followUpTab && isAdmin && (
                 <div className="flex items-center gap-2">
                   <DateRangePicker />
                 </div>
@@ -551,7 +618,7 @@ function LeadsContent() {
               </PopoverContent>
             </Popover>
 
-            {!followUpTab && (
+            {!followUpTab && isAdmin && (
               <div className="w-[200px]">
                 <DateRangePicker />
               </div>
@@ -594,11 +661,43 @@ function LeadsContent() {
             </div>
           )}
 
+            {isAdmin && selectedCount > 0 && (
+              <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                <span className="text-sm font-semibold tabular-nums">
+                  {selectedCount} selected
+                </span>
+                {selectedCount < filteredLeads.length && allOnPageSelected && (
+                  <Button type="button" variant="link" className="h-auto p-0 text-sm" onClick={selectAllFilteredLeads}>
+                    Select all {filteredLeads.length} filtered leads
+                  </Button>
+                )}
+                <div className="flex flex-wrap gap-2 ml-auto">
+                  <Button type="button" variant="outline" size="sm" onClick={clearLeadSelection}>
+                    Clear selection
+                  </Button>
+                  <Button type="button" variant="destructive" size="sm" onClick={openBulkDeleteDialog}>
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete selected
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50 h-11 hover:bg-transparent">
-                    {role === 'ADMIN' && (
+                    {isAdmin && (
+                      <TableHead className="w-10 pr-0">
+                        <Checkbox
+                          checked={allOnPageSelected ? true : someOnPageSelected ? 'indeterminate' : false}
+                          onCheckedChange={(v) => toggleSelectAllOnPage(v === true)}
+                          aria-label="Select all leads on this page"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </TableHead>
+                    )}
+                    {isAdmin && (
                       <TableHead className="font-bold text-xs uppercase tracking-wider">Employee</TableHead>
                     )}
                     <TableHead className="font-bold text-xs uppercase tracking-wider">Name</TableHead>
@@ -620,7 +719,16 @@ function LeadsContent() {
                         className="hover:bg-muted/30 transition-colors group border-b h-14 cursor-pointer"
                         onClick={() => handleRowClick(lead)}
                       >
-                        {role === 'ADMIN' && (
+                        {isAdmin && (
+                          <TableCell className="w-10 pr-0" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selectedLeadIds.has(lead.id)}
+                              onCheckedChange={(v) => toggleLeadSelected(lead.id, v === true)}
+                              aria-label={`Select ${lead.name}`}
+                            />
+                          </TableCell>
+                        )}
+                        {isAdmin && (
                           <TableCell>
                             <span className="text-sm font-medium text-muted-foreground">
                               {users.find(u => u.id === lead.createdBy)?.name || '—'}
@@ -701,7 +809,7 @@ function LeadsContent() {
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
-                            {role === 'ADMIN' && (
+                            {isAdmin && (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -720,7 +828,7 @@ function LeadsContent() {
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={role === 'ADMIN' ? 10 : 9} className="text-center text-muted-foreground py-16">
+                      <TableCell colSpan={tableColSpan} className="text-center text-muted-foreground py-16">
                         <div className="flex flex-col items-center gap-2">
                           <Search className="h-8 w-8 text-muted-foreground/60" />
                           <p>No leads found matching your filters</p>
@@ -731,7 +839,7 @@ function LeadsContent() {
                 </TableBody>
                 <TableFooter className="bg-muted/10 border-t">
                   <TableRow>
-                    <TableCell colSpan={role === 'ADMIN' ? 10 : 9} className="text-right text-xs font-medium text-muted-foreground px-6 py-3">
+                    <TableCell colSpan={tableColSpan} className="text-right text-xs font-medium text-muted-foreground px-6 py-3">
                       Records Found: {filteredLeads.length}
                     </TableCell>
                   </TableRow>
@@ -773,20 +881,49 @@ function LeadsContent() {
         </Dialog>
 
         {/* Delete Confirmation Dialog */}
-        <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <Dialog
+          open={isDeleteDialogOpen}
+          onOpenChange={(open) => {
+            setIsDeleteDialogOpen(open);
+            if (!open) setDeleteTargetIds([]);
+          }}
+        >
           <DialogContent className="bg-card">
             <DialogHeader>
-              <DialogTitle className="text-xl font-bold text-foreground border-b pb-2">Delete Lead</DialogTitle>
+              <DialogTitle className="text-xl font-bold text-foreground border-b pb-2">
+                {deleteTargetIds.length > 1
+                  ? `Delete ${deleteTargetIds.length} leads`
+                  : 'Delete lead'}
+              </DialogTitle>
               <DialogDescription className="py-4 text-muted-foreground">
-                Are you sure you want to delete this lead? This action cannot be undone and will remove all associated data.
+                {deleteTargetIds.length > 1
+                  ? 'Are you sure you want to delete the selected leads? This cannot be undone and removes linked sales data for those leads.'
+                  : 'Are you sure you want to delete this lead? This action cannot be undone and will remove all associated data.'}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter className="bg-muted/40 p-4 -mx-6 -mb-6 rounded-b-lg">
-              <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} className="bg-card">
+              <Button
+                variant="outline"
+                disabled={deleteInProgress}
+                onClick={() => setIsDeleteDialogOpen(false)}
+                className="bg-card"
+              >
                 Cancel
               </Button>
-              <Button variant="destructive" onClick={confirmDelete} className="bg-rose-600 hover:bg-rose-700">
-                Delete Permanently
+              <Button
+                variant="destructive"
+                disabled={deleteInProgress}
+                onClick={() => void confirmDelete()}
+                className="bg-rose-600 hover:bg-rose-700"
+              >
+                {deleteInProgress ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  'Delete permanently'
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

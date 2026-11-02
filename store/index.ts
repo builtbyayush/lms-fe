@@ -61,6 +61,7 @@ interface Store {
   updateLead: (id: string, updates: Partial<Lead>) => Promise<void>;
   logContactAttempt: (leadId: string) => Promise<Lead>;
   deleteLead: (id: string) => Promise<void>;
+  deleteLeadsBulk: (ids: string[]) => Promise<{ deletedCount: number }>;
 
   addSale: (sale: Omit<Sale, 'id' | 'createdAt'>) => Promise<void>;
 
@@ -331,6 +332,22 @@ export const useStore = create<Store>()(
             console.error('Delete lead error:', error);
             throw error;
           }
+        },
+
+        deleteLeadsBulk: async (ids) => {
+          const unique = [...new Set(ids.filter(Boolean))];
+          if (!unique.length) return { deletedCount: 0 };
+          const response = await authFetch(`${API_BASE_URL}/sales/leads/bulk-delete`, {
+            method: 'POST',
+            body: JSON.stringify({ ids: unique }),
+          });
+          if (!response.ok) {
+            const message = await parseApiError(response);
+            throw new Error(message);
+          }
+          const body = (await response.json()) as { deletedCount?: number };
+          await get().loadLeads();
+          return { deletedCount: body.deletedCount ?? unique.length };
         },
 
         addSale: async (sale) => {

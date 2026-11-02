@@ -46,6 +46,13 @@ import {
 import { Lead, User } from '@/types';
 import { API_BASE_URL } from '@/lib/api';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
+import { useReportingDateRange } from '@/hooks/useReportingDateRange';
+import {
+  filterSalesByDateRange,
+  formatCurrentMonthLabel,
+  isEmployeeScopedView,
+} from '@/lib/employee-month-scope';
+import { isCreatedInDateRange } from '@/lib/lead-reporting';
 
 const states = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
@@ -74,6 +81,8 @@ export default function SalesPage() {
     role,
     token,
   } = useStore();
+  const reportingRange = useReportingDateRange();
+  const employeeView = isEmployeeScopedView(role);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -267,32 +276,9 @@ export default function SalesPage() {
     });
     // END: Always show only converted leads
 
-    // Date filter
-    if (dateRange.from || dateRange.to) {
-      filtered = filtered.filter(s => {
-        const saleDate = new Date(s.saleDate);
-        saleDate.setHours(0, 0, 0, 0);
-        
-        if (dateRange.from && dateRange.to) {
-          const fromDate = new Date(dateRange.from);
-          fromDate.setHours(0, 0, 0, 0);
-          const toDate = new Date(dateRange.to);
-          toDate.setHours(23, 59, 59, 999);
-          
-          return saleDate >= fromDate && saleDate <= toDate;
-        }
-        if (dateRange.from) {
-          const fromDate = new Date(dateRange.from);
-          fromDate.setHours(0, 0, 0, 0);
-          return saleDate >= fromDate;
-        }
-        if (dateRange.to) {
-          const toDate = new Date(dateRange.to);
-          toDate.setHours(23, 59, 59, 999);
-          return saleDate <= toDate;
-        }
-        return true;
-      });
+    const saleDateRange = employeeView ? reportingRange : dateRange;
+    if (employeeView || saleDateRange.from || saleDateRange.to) {
+      filtered = filterSalesByDateRange(filtered, saleDateRange);
     }
 
     if (influencerFilter !== 'all') {
@@ -382,7 +368,7 @@ export default function SalesPage() {
     }
 
     return filtered;
-  }, [sales, dateRange, influencerFilter, salesPersonFilter, gstFilter, paymentInfoFilter, mobileFilter, nameFilter, leads, callStatusFilter, ratingFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter]);
+  }, [sales, dateRange, reportingRange, employeeView, influencerFilter, salesPersonFilter, gstFilter, paymentInfoFilter, mobileFilter, nameFilter, leads, callStatusFilter, ratingFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter]);
 
   const totalPages = Math.ceil(filteredSales.length / ITEMS_PER_PAGE);
   const paginatedSales = useMemo(() => {
@@ -400,23 +386,14 @@ export default function SalesPage() {
 
   // Leads filtered by createdAt (for Performance tab - respects global date filter)
   const leadsInDateRange = useMemo(() => {
+    if (employeeView) {
+      return leads.filter((l) =>
+        isCreatedInDateRange(l, reportingRange.from, reportingRange.to),
+      );
+    }
     if (!dateRange?.from && !dateRange?.to) return leads;
-    return leads.filter(l => {
-      const d = new Date(l.createdAt);
-      d.setHours(0, 0, 0, 0);
-      if (dateRange.from) {
-        const from = new Date(dateRange.from);
-        from.setHours(0, 0, 0, 0);
-        if (d < from) return false;
-      }
-      if (dateRange.to) {
-        const to = new Date(dateRange.to);
-        to.setHours(23, 59, 59, 999);
-        if (d > to) return false;
-      }
-      return true;
-    });
-  }, [leads, dateRange]);
+    return leads.filter((l) => isCreatedInDateRange(l, dateRange.from, dateRange.to));
+  }, [leads, dateRange, employeeView, reportingRange]);
 
   // Performance Logic (uses date-filtered leads + sales)
   const filteredPerformance = useMemo(() => {
@@ -477,7 +454,11 @@ export default function SalesPage() {
       <div className="space-y-6">
         <div className="mb-2">
           <h1 className="text-3xl font-bold tracking-tight mb-0.5">Sales Overview</h1>
-          <p className="text-sm text-muted-foreground">Manage sales records and view performance</p>
+          <p className="text-sm text-muted-foreground">
+            {employeeView
+              ? `Sales and performance for ${formatCurrentMonthLabel()}`
+              : 'Manage sales records and view performance'}
+          </p>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

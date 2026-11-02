@@ -5,9 +5,11 @@ import { Topbar } from './topbar';
 import { useStore } from '@/store';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { EmployeeMonthScopeBanner } from '@/components/employee-month-scope-banner';
+import { getCurrentMonthRange, isEmployeeScopedView } from '@/lib/employee-month-scope';
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const { role, _hasHydrated, loadInfluencers, loadInteractions } = useStore();
+  const { role, _hasHydrated, loadInfluencers, loadInteractions, setDateRange } = useStore();
   const router = useRouter();
 
   useEffect(() => {
@@ -24,6 +26,12 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
     loadData();
   }, [role, _hasHydrated, router, loadInfluencers, loadInteractions]);
+
+  useEffect(() => {
+    if (!_hasHydrated || !isEmployeeScopedView(role)) return;
+    const { from, to } = getCurrentMonthRange();
+    setDateRange({ from, to });
+  }, [role, _hasHydrated, setDateRange]);
 
   if (!_hasHydrated || !role) {
     return null;
@@ -47,6 +55,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             </div>
 
             <div className="col-span-12 lg:col-span-10 h-full overflow-y-auto no-scrollbar pb-6">
+              <EmployeeMonthScopeBanner />
               {children}
             </div>
           </div>

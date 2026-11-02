@@ -4,9 +4,12 @@ import { Card } from '@/components/ui/card';
 import { useStore } from '@/store';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { Badge } from '@/components/ui/badge';
+import { formatCurrentMonthLabel, isEmployeeScopedView } from '@/lib/employee-month-scope';
 
 export function Topbar() {
-  const { user } = useStore();
+  const { user, role } = useStore();
+  const employeeView = isEmployeeScopedView(role);
 
   return (
     <Card className="p-6 shadow-md border border-border bg-card">
@@ -21,7 +24,13 @@ export function Topbar() {
         </div>
 
         <div className="flex items-center gap-2">
-          <DateRangePicker />
+          {employeeView ? (
+            <Badge variant="secondary" className="px-3 py-1.5 text-sm font-medium">
+              {formatCurrentMonthLabel()}
+            </Badge>
+          ) : (
+            <DateRangePicker />
+          )}
           <ThemeToggle />
         </div>
       </div>

@@ -72,6 +72,11 @@ export function mergeKpiWithLeadFallback(
   return apiValue ?? clientValue ?? 0;
 }
 
+/** Lead still in the pipeline (not yet converted to customer). */
+export function isOpenLead(lead: { converted: boolean }): boolean {
+  return !lead.converted;
+}
+
 type FollowUpQueueLead = {
   followUpDate: string | null;
   converted: boolean;

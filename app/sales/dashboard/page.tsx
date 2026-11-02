@@ -30,6 +30,7 @@ import {
   isCreatedInDateRange,
   isFollowUpDueToday,
   isFollowUpOverdue,
+  isOpenLead,
   mergeKpiWithLeadFallback,
 } from '@/lib/lead-reporting';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -37,6 +38,12 @@ import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { API_BASE_URL } from '@/lib/api';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
+import { useReportingDateRange } from '@/hooks/useReportingDateRange';
+import {
+  filterSalesByDateRange,
+  formatCurrentMonthLabel,
+  isEmployeeScopedView,
+} from '@/lib/employee-month-scope';
 
 /** Non-admin dashboard summary: scoped to JWT user via salesExecutiveId / createdBy on the API */
 type ExecDashboardSummary = {
@@ -97,7 +104,9 @@ export default function SalesDashboardPage() {
     loadUsers();
   }, [loadLeads, loadSales, loadInfluencers, loadUsers]);
 
-  const [auditMonth, setAuditMonth] = useState(new Date());
+  const reportingRange = useReportingDateRange();
+  const employeeView = isEmployeeScopedView(role);
+  const [auditMonth, setAuditMonth] = useState(() => startOfMonth(new Date()));
   const [isAuditOpen, setIsAuditOpen] = useState(false);
   const [auditSearch, setAuditSearch] = useState('');
   const [auditStatus, setAuditStatus] = useState('all');
@@ -281,49 +290,51 @@ export default function SalesDashboardPage() {
     [auditedLeads, auditPage]
   );
 
+  useEffect(() => {
+    if (employeeView) {
+      setAuditMonth(startOfMonth(new Date()));
+    }
+  }, [employeeView]);
+
+  const scopedLeads = useMemo(() => {
+    if (!employeeView) return leads;
+    return leads.filter((l) =>
+      isCreatedInDateRange(l, reportingRange.from, reportingRange.to),
+    );
+  }, [leads, employeeView, reportingRange.from, reportingRange.to]);
+
   // Filtered lists for KPI display
   const filteredLeads = useMemo(() => {
+    if (employeeView) return scopedLeads;
     if (!dateRange?.from && !dateRange?.to) return leads;
-    return leads.filter(l =>
-      isCreatedInDateRange(l, dateRange.from, dateRange.to),
-    );
-  }, [leads, dateRange]);
+    return leads.filter((l) => isCreatedInDateRange(l, dateRange.from, dateRange.to));
+  }, [leads, scopedLeads, employeeView, dateRange]);
 
   const filteredSales = useMemo(() => {
-    if (!dateRange?.from && !dateRange?.to) return sales;
-    return sales.filter(s => {
-      const d = new Date(s.saleDate);
-      d.setHours(0,0,0,0);
-      if (dateRange.from) {
-        const from = new Date(dateRange.from);
-        from.setHours(0,0,0,0);
-        if (d < from) return false;
-      }
-      if (dateRange.to) {
-        const to = new Date(dateRange.to);
-        to.setHours(23,59,59,999);
-        if (d > to) return false;
-      }
-      return true;
-    });
-  }, [sales, dateRange]);
+    const range = employeeView ? reportingRange : dateRange;
+    if (!employeeView && !range?.from && !range?.to) return sales;
+    return filterSalesByDateRange(sales, range);
+  }, [sales, employeeView, reportingRange, dateRange]);
 
   // KPI Calculations
-  const totalLeads = filteredLeads.length;
+  const totalLeads = filteredLeads.filter(isOpenLead).length;
+  const leadsInScope = filteredLeads.length;
   const conversionsInSelectedRange = useMemo(() => {
-    if (!dateRange?.from && !dateRange?.to) {
+    const range = employeeView ? reportingRange : dateRange;
+    const leadPool = employeeView ? scopedLeads : leads;
+    if (!employeeView && !range?.from && !range?.to) {
       return leads.filter((l) => l.converted).length;
     }
-    return leads.filter((l) =>
-      isConversionInDateRange(l, sales, dateRange.from, dateRange.to),
+    return leadPool.filter((l) =>
+      isConversionInDateRange(l, sales, range.from, range.to),
     ).length;
-  }, [leads, sales, dateRange]);
+  }, [leads, scopedLeads, sales, employeeView, reportingRange, dateRange]);
   const convertedLeads = conversionsInSelectedRange;
-  const conversionRate = totalLeads > 0 ? (convertedLeads / totalLeads) * 100 : 0;
+  const conversionRate =
+    leadsInScope > 0 ? (convertedLeads / leadsInScope) * 100 : 0;
   const clientTotalSales = filteredSales.length;
   const clientTotalRevenue = filteredSales.reduce((sum, s) => sum + s.amount, 0);
-  const hasDateFilter = Boolean(dateRange?.from || dateRange?.to);
-  /** All-time KPIs use API totals (your salesExecutiveId only); date filter uses client slice */
+  const hasDateFilter = employeeView || Boolean(dateRange?.from || dateRange?.to);
   const totalSales = hasDateFilter
     ? clientTotalSales
     : mergeKpiWithLeadFallback(execSummary?.totalSales, clientTotalSales);
@@ -355,18 +366,19 @@ export default function SalesDashboardPage() {
     const handleLeadsClick = (options?: { status?: string; rating?: string; gst?: string }) => {
     const params = new URLSearchParams();
     if (options?.status) params.set('status', options.status);
+    else if (!options?.rating && !options?.gst) params.set('status', 'pending');
     if (options?.rating) params.set('rating', options.rating);
     if (options?.gst) params.set('gst', options.gst);
     router.push(`/leads?${params.toString()}`);
   };
 
   const todayFollowUps = useMemo(
-    () => leads.filter((l) => isFollowUpDueToday(l)),
-    [leads],
+    () => scopedLeads.filter((l) => isFollowUpDueToday(l)),
+    [scopedLeads],
   );
   const overdueFollowUps = useMemo(
-    () => leads.filter((l) => isFollowUpOverdue(l)),
-    [leads],
+    () => scopedLeads.filter((l) => isFollowUpOverdue(l)),
+    [scopedLeads],
   );
 
   return (
@@ -374,7 +386,11 @@ export default function SalesDashboardPage() {
       <div className="space-y-8">
         <div>
           <h1 className="text-4xl font-bold tracking-tight mb-2">Sales Dashboard</h1>
-          <p className="text-muted-foreground">Your performance overview</p>
+          <p className="text-muted-foreground">
+            {employeeView
+              ? `Your performance for ${formatCurrentMonthLabel()}`
+              : 'Your performance overview'}
+          </p>
         </div>
 
         {/* KPI Cards */}
@@ -388,7 +404,7 @@ export default function SalesDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold mb-1">{totalLeads}</div>
-              <p className="text-xs text-muted-foreground">Leads you created</p>
+              <p className="text-xs text-muted-foreground">Open leads only (excludes converted)</p>
             </CardContent>
           </Card>
 
@@ -581,27 +597,33 @@ export default function SalesDashboardPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 bg-muted/40 p-1 rounded-lg border">
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    onClick={() => setAuditMonth(subMonths(auditMonth, 1))}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <div className="px-4 font-bold text-foreground min-w-[140px] text-center text-sm">
-                    {format(auditMonth, 'MMM yyyy')}
+                {employeeView ? (
+                  <div className="px-4 py-2 font-bold text-foreground text-sm rounded-lg border bg-muted/40">
+                    {format(auditMonth, 'MMMM yyyy')}
                   </div>
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    onClick={() => setAuditMonth(addMonths(auditMonth, 1))}
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
+                ) : (
+                  <div className="flex items-center gap-2 bg-muted/40 p-1 rounded-lg border">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setAuditMonth(subMonths(auditMonth, 1))}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="px-4 font-bold text-foreground min-w-[140px] text-center text-sm">
+                      {format(auditMonth, 'MMM yyyy')}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setAuditMonth(addMonths(auditMonth, 1))}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-3 items-center">

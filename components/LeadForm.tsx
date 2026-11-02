@@ -26,7 +26,10 @@ import {
   leadCallStatuses,
   mapLeadToFormValues,
 } from '@/lib/lead-form-map';
-import { fetchLeadByMobile } from '@/lib/fetch-lead-by-mobile';
+import {
+  checkLeadMobileAvailability,
+  fetchLeadById,
+} from '@/lib/check-lead-mobile';
 
 const toId = extractId;
 
@@ -64,6 +67,16 @@ const leadSchema = z.object({
   salesAmount: z.number().min(0).optional().nullable(),
   gstStatus: z.enum(gstStatuses).default('NO'),
   paymentInfoShared: z.boolean().default(false),
+}).superRefine((data, ctx) => {
+  if (data.callStatus === 'WRONG_NUMBER') return;
+  const r = data.rating;
+  if (r == null || r < 1 || r > 5) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Please select a rating from 1 to 5 stars',
+      path: ['rating'],
+    });
+  }
 });
 
 type LeadFormData = z.input<typeof leadSchema>;
@@ -88,6 +101,8 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [attemptError, setAttemptError] = useState<string | null>(null);
   const [attemptLogging, setAttemptLogging] = useState(false);
+  const [mobileDuplicateMessage, setMobileDuplicateMessage] = useState<string | null>(null);
+  const [mobileCheckPending, setMobileCheckPending] = useState(false);
   const [influencerReadOnly, setInfluencerReadOnly] = useState(false);
   /** Bumped after RHF `reset` so Radix Select trees remount and pick up programmatic values. */
   const [selectMountKey, setSelectMountKey] = useState(0);
@@ -236,7 +251,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   }, [bootstrap, initialMobile, reset]);
 
   /**
-   * Add flow: detect duplicate mobile via API (no full leads list required).
+   * Add flow: as soon as mobile has 10+ digits, check duplicates (including other reps).
    */
   useEffect(() => {
     if (bootstrap.status !== 'ready' || bootstrap.lead || initialData?.id) return;
@@ -246,6 +261,8 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       setDiscoveredLead(null);
       setShowAlert(false);
       setInfluencerReadOnly(false);
+      setMobileDuplicateMessage(null);
+      setMobileCheckPending(false);
       discoverySnapshotRef.current = null;
       return;
     }
@@ -255,17 +272,51 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
 
     const timer = window.setTimeout(() => {
       const run = async () => {
+        setMobileCheckPending(true);
         const { token, influencers: infList } = useStore.getState();
-        const found = await fetchLeadByMobile(mobile, token);
+        const check = await checkLeadMobileAvailability(mobile, token);
         if (cancelled) return;
+        setMobileCheckPending(false);
 
-        if (!found) {
+        if (!check || check.status === 'available') {
+          setDiscoveredLead(null);
+          setShowAlert(false);
+          setInfluencerReadOnly(false);
+          setMobileDuplicateMessage(null);
+          discoverySnapshotRef.current = null;
+          return;
+        }
+
+        if (check.status === 'owned_by_other' && !check.leadId) {
           setDiscoveredLead(null);
           setShowAlert(false);
           setInfluencerReadOnly(false);
           discoverySnapshotRef.current = null;
+          setMobileDuplicateMessage(
+            'A lead with this mobile number already exists and is managed by another team member. You cannot create a duplicate.',
+          );
           return;
         }
+
+        const leadId = check.leadId;
+        if (!leadId) {
+          setMobileDuplicateMessage(null);
+          return;
+        }
+
+        const found = await fetchLeadById(leadId, token);
+        if (cancelled) return;
+
+        if (!found) {
+          setMobileDuplicateMessage(
+            'A lead with this mobile number already exists. You do not have access to open it.',
+          );
+          setDiscoveredLead(null);
+          setShowAlert(false);
+          return;
+        }
+
+        setMobileDuplicateMessage(null);
 
         const snap = discoverySnapshotRef.current;
         if (snap && snap.mobileDigits === mobileDigits && snap.leadId === found.id) {
@@ -325,6 +376,9 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   const isEditingExistingLead =
     Boolean(initialData?.id) || Boolean(originalLead?.id) || Boolean(discoveredLead?.id);
   const isMobileReadOnly = role !== 'ADMIN' && isEditingExistingLead;
+  const blockSaveForDuplicateMobile =
+    Boolean(mobileDuplicateMessage && !discoveredLead && !originalLead);
+  const saveLeadDisabled = blockSaveForDuplicateMobile || mobileCheckPending;
 
   const attemptLead: Lead | null =
     originalLead ?? discoveredLead ?? (bootstrap.status === 'ready' ? bootstrap.lead : null);
@@ -350,6 +404,12 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
   };
 
   const onSubmit = async (data: LeadFormData) => {
+    if (mobileDuplicateMessage && !discoveredLead && !originalLead) {
+      setError('mobile', { message: mobileDuplicateMessage });
+      setSubmitError(mobileDuplicateMessage);
+      return;
+    }
+
     try {
       let savedLead: Lead;
       
@@ -383,7 +443,10 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         influencerId: data.influencerId,
         sourceCode: data.sourceCode || activeSourceCode,
         callStatus: data.callStatus,
-        ...(ratingNum != null && ratingNum >= 1 && ratingNum <= 5 && { rating: ratingNum }),
+        ...(data.callStatus !== 'WRONG_NUMBER' &&
+          ratingNum != null &&
+          ratingNum >= 1 &&
+          ratingNum <= 5 && { rating: ratingNum }),
         notes: data.notes,
         converted: data.converted,
         amount: Number(data.salesAmount) || 0,
@@ -574,11 +637,20 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
             className={cn(
               "h-11 border-2 transition-colors",
               isMobileReadOnly ? 'bg-muted cursor-not-allowed' : 'hover:border-primary/50 focus:border-primary',
-              errors.mobile && 'border-destructive'
+              (errors.mobile || mobileDuplicateMessage) && 'border-destructive'
             )}
           />
+          {mobileCheckPending && !isMobileReadOnly && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Checking mobile number…
+            </p>
+          )}
           {isMobileReadOnly && (
             <p className="text-xs text-muted-foreground">Mobile can only be changed by an administrator.</p>
+          )}
+          {mobileDuplicateMessage && !discoveredLead && !originalLead && (
+            <p className="text-sm text-red-600 font-medium">{mobileDuplicateMessage}</p>
           )}
           {errors.mobile && (
             <p className="text-sm text-red-600 font-medium">{errors.mobile.message}</p>
@@ -804,7 +876,12 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Rating</label>
+          <label className="text-sm font-semibold text-foreground">
+            Rating{' '}
+            {watch('callStatus') !== 'WRONG_NUMBER' && (
+              <span className="text-destructive">*</span>
+            )}
+          </label>
           <div className="flex gap-1">
             {[1, 2, 3, 4, 5].map((value) => (
               <Button
@@ -824,6 +901,12 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
               </Button>
             ))}
           </div>
+          {watch('callStatus') === 'WRONG_NUMBER' && (
+            <p className="text-xs text-muted-foreground">Rating is not required for wrong numbers.</p>
+          )}
+          {errors.rating && (
+            <p className="text-sm text-red-600 font-medium">{errors.rating.message}</p>
+          )}
         </div>
 
         <div className="space-y-2">
@@ -959,8 +1042,9 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
       </div>
 
       <div className="flex gap-4 pt-4 border-t">
-        <Button 
-          type="submit" 
+        <Button
+          type="submit"
+          disabled={saveLeadDisabled}
           className="h-11 px-8 gradient-primary shadow-md hover:shadow-lg font-semibold"
         >
           Save Lead
