@@ -6,7 +6,7 @@ File: **`frontend-docker.yml`**
 
 1. Builds **`iamcyberster/lms-fe:latest`** (amd64, GHA layer cache).
 2. Pushes to **Docker Hub** (`NEXT_PUBLIC_API_BASE_URL` from repo **variable**, default `/api`).
-3. SSHs to **EC2**, **`docker pull`**, recreates **`lms-fe`** on **host port 3001**.
+3. SSHs to **EC2**, stops the old container, **`docker image prune -af`** (unused layers), **`docker pull`**, recreates **`lms-fe`**, prunes again on **host port 3001**.
 
 ### Secrets
 

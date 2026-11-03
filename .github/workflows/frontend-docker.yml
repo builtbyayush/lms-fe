@@ -84,14 +84,31 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
+            prune_redundant_images() {
+              echo "=== Prune images not used by running containers ==="
+              docker image prune -af
+              docker builder prune -af 2>/dev/null || true
+              docker container prune -f 2>/dev/null || true
+            }
+            echo "=== Disk (before deploy) ==="
+            df -h /
+            docker system df 2>/dev/null || true
+            echo "=== Stop old ${FE_CONTAINER} (free previous image ref) ==="
+            docker rm -f "${FE_CONTAINER}" 2>/dev/null || true
+            prune_redundant_images
+            echo "=== Disk (after pre-pull prune) ==="
+            df -h /
             echo "Pulling ${IMAGE_NAME}:${IMAGE_TAG} from Docker Hub..."
             docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
-            echo "Recreating ${FE_CONTAINER} (host :${FE_HOST_PORT} → container :${FE_CONTAINER_PORT})..."
-            docker rm -f "${FE_CONTAINER}" 2>/dev/null || true
+            echo "Starting ${FE_CONTAINER} (host :${FE_HOST_PORT} → container :${FE_CONTAINER_PORT})..."
             docker run -d \
               --name "${FE_CONTAINER}" \
               -p "${FE_HOST_PORT}:${FE_CONTAINER_PORT}" \
               --restart unless-stopped \
               "${IMAGE_NAME}:${IMAGE_TAG}"
             docker ps --filter "name=${FE_CONTAINER}"
+            prune_redundant_images
+            echo "=== Disk (after deploy) ==="
+            df -h /
+            docker system df 2>/dev/null || true
             echo "Frontend deploy complete."
