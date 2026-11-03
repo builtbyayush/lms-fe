@@ -17,9 +17,9 @@ export function EmployeeMonthScopeBanner() {
     >
       <CalendarDays className="h-5 w-5 text-sky-600 dark:text-sky-400 shrink-0" />
       <p className="text-foreground">
-        <span className="font-semibold">Showing data for {label}.</span>{' '}
+        <span className="font-semibold">Sales and dashboard figures are for {label}.</span>{' '}
         <span className="text-muted-foreground">
-          Leads, sales, and dashboard numbers are limited to this month.
+          Leads and follow-ups include open work from earlier months.
         </span>
       </p>
     </div>

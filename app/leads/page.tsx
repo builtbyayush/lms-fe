@@ -23,12 +23,9 @@ import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { TablePagination, paginateArray } from '@/components/ui/table-pagination';
 import {
-  isCreatedInDateRange,
   isFollowUpDueToday,
   isFollowUpOverdue,
 } from '@/lib/lead-reporting';
-import { useReportingDateRange } from '@/hooks/useReportingDateRange';
-import { isEmployeeScopedView } from '@/lib/employee-month-scope';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -43,8 +40,6 @@ import {
 function LeadsContent() {
   const { leads, dateRange, deleteLead, deleteLeadsBulk, loadLeads, influencers, loadInfluencers, users, loadUsers, role } = useStore();
   const isAdmin = role === 'ADMIN';
-  const employeeView = isEmployeeScopedView(role);
-  const reportingRange = useReportingDateRange();
   const tableColSpan = isAdmin ? 11 : 9;
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -116,20 +111,13 @@ function LeadsContent() {
     }
   }, [salesPersonFilter, loadLeads]);
 
-  const monthScopedLeads = useMemo(() => {
-    if (!employeeView) return leads;
-    return leads.filter((l) =>
-      isCreatedInDateRange(l, reportingRange.from, reportingRange.to),
-    );
-  }, [leads, employeeView, reportingRange.from, reportingRange.to]);
-
   const followUpTodayCount = useMemo(
-    () => monthScopedLeads.filter((l) => isFollowUpDueToday(l)).length,
-    [monthScopedLeads],
+    () => leads.filter((l) => isFollowUpDueToday(l)).length,
+    [leads],
   );
   const followUpOverdueCount = useMemo(
-    () => monthScopedLeads.filter((l) => isFollowUpOverdue(l)).length,
-    [monthScopedLeads],
+    () => leads.filter((l) => isFollowUpOverdue(l)).length,
+    [leads],
   );
 
   const setFollowUpView = (tab: 'today' | 'overdue' | null) => {
@@ -140,7 +128,7 @@ function LeadsContent() {
   };
 
   const filteredLeads = useMemo(() => {
-    let filtered = [...(employeeView ? monthScopedLeads : leads)];
+    let filtered = [...leads];
 
     if (followUpTab === 'today') {
       filtered = filtered.filter((l) => isFollowUpDueToday(l));
@@ -161,7 +149,7 @@ function LeadsContent() {
     }
 
     // 2. Creation Date range filter (createdAt) — skip in follow-up queue so overdue leads are not hidden
-    if (!employeeView && !followUpTab && (dateRange.from || dateRange.to)) {
+    if (isAdmin && !followUpTab && (dateRange.from || dateRange.to)) {
       filtered = filtered.filter(l => {
         const createdDate = new Date(l.createdAt);
         createdDate.setHours(0, 0, 0, 0);
@@ -264,7 +252,7 @@ function LeadsContent() {
     }
 
     return filtered;
-  }, [leads, monthScopedLeads, employeeView, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
+  }, [leads, isAdmin, dateRange, statusFilter, ratingFilter, nameFilter, mobileFilter, followUpTab, influencerFilter, gstFilter, paymentInfoFilter, callStatusFilter, minAmount, maxAmount, sourceCodeFilter, followUpDateFilter, salesPersonFilter]);
 
   // Reset pagination whenever the filtered set changes (filter, search, date, etc.).
   useEffect(() => {

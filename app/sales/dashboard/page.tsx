@@ -373,12 +373,12 @@ export default function SalesDashboardPage() {
   };
 
   const todayFollowUps = useMemo(
-    () => scopedLeads.filter((l) => isFollowUpDueToday(l)),
-    [scopedLeads],
+    () => leads.filter((l) => isFollowUpDueToday(l)),
+    [leads],
   );
   const overdueFollowUps = useMemo(
-    () => scopedLeads.filter((l) => isFollowUpOverdue(l)),
-    [scopedLeads],
+    () => leads.filter((l) => isFollowUpOverdue(l)),
+    [leads],
   );
 
   return (
