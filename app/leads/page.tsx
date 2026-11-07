@@ -90,8 +90,11 @@ function LeadsContent() {
     const view = searchParams.get('view');
     const gst = searchParams.get('gst');
     
-    if (status) setStatusFilter(status);
-    else if (view !== 'today_followup' && view !== 'overdue_followup') {
+    if (status) {
+      const employeeLeadsStatus =
+        !isAdmin && (status === 'converted' || status === 'all') ? 'pending' : status;
+      setStatusFilter(employeeLeadsStatus);
+    } else if (view !== 'today_followup' && view !== 'overdue_followup') {
       setStatusFilter('pending');
     }
     if (rating) setRatingFilter(rating);
@@ -100,7 +103,7 @@ function LeadsContent() {
     if (gst && ['yes', 'no', 'YES', 'NO', 'APPLIED', 'APPLIED_THROUGH_US'].includes(gst)) {
       setGstFilter(gst.toUpperCase() === 'YES' ? 'YES' : gst.toUpperCase() === 'NO' ? 'NO' : gst);
     }
-  }, [searchParams]);
+  }, [searchParams, isAdmin]);
 
   // Reload leads from server when sales executive filter changes
   useEffect(() => {
@@ -175,8 +178,10 @@ function LeadsContent() {
       });
     }
 
-    // 3. Status filter
-    if (statusFilter === 'converted') {
+    // 3. Status filter — employees never see converted clients on Leads
+    if (!isAdmin) {
+      filtered = filtered.filter((l) => !l.converted);
+    } else if (statusFilter === 'converted') {
       filtered = filtered.filter(l => l.converted);
     } else if (statusFilter === 'pending') {
       filtered = filtered.filter(l => !l.converted);
@@ -410,7 +415,7 @@ function LeadsContent() {
                       size="sm" 
                       className="h-8 px-4 text-xs font-bold text-blue-600 hover:bg-blue-50"
                       onClick={() => {
-                        setStatusFilter('all');
+                        setStatusFilter(isAdmin ? 'all' : 'pending');
                         setRatingFilter('all');
                         setInfluencerFilter('all');
                         setGstFilter('all');
@@ -453,8 +458,8 @@ function LeadsContent() {
                           <SelectValue placeholder="Status" />
                         </SelectTrigger>
                         <SelectContent className="bg-card">
-                          <SelectItem value="all">Any Status</SelectItem>
-                          <SelectItem value="converted">Converted Only</SelectItem>
+                          {isAdmin && <SelectItem value="all">Any Status</SelectItem>}
+                          {isAdmin && <SelectItem value="converted">Converted Only</SelectItem>}
                           <SelectItem value="pending">Pending Only</SelectItem>
                         </SelectContent>
                       </Select>

@@ -109,7 +109,9 @@ export default function SalesDashboardPage() {
   const [auditMonth, setAuditMonth] = useState(() => startOfMonth(new Date()));
   const [isAuditOpen, setIsAuditOpen] = useState(false);
   const [auditSearch, setAuditSearch] = useState('');
-  const [auditStatus, setAuditStatus] = useState('all');
+  const [auditStatus, setAuditStatus] = useState(() =>
+    isEmployeeScopedView(role) ? 'pending' : 'all',
+  );
   const [auditRating, setAuditRating] = useState('all');
   const [auditInfluencerFilter, setAuditInfluencerFilter] = useState('all');
   const [auditGstFilter, setAuditGstFilter] = useState('all');
@@ -193,17 +195,19 @@ export default function SalesDashboardPage() {
   const thisMonthLeadsCount = useMemo(() => {
     const start = startOfMonth(new Date());
     const end = endOfMonth(new Date());
-    return leads.filter(l => {
+    return leads.filter((l) => {
+      if (employeeView && l.converted) return false;
       const d = new Date(l.createdAt);
       return isWithinInterval(d, { start, end });
     }).length;
-  }, [leads]);
+  }, [leads, employeeView]);
 
   const auditedLeads = useMemo(() => {
     const start = startOfMonth(auditMonth);
     const end = endOfMonth(auditMonth);
     
     let filtered = leads.filter(l => {
+      if (employeeView && l.converted) return false;
       if (auditStatus === 'converted') {
         if (!l.converted) return false;
         const conv = effectiveConversionDate(l, sales);
@@ -279,7 +283,7 @@ export default function SalesDashboardPage() {
     }
 
     return filtered;
-  }, [leads, sales, auditMonth, auditSearch, auditStatus, auditRating, auditInfluencerFilter, auditGstFilter, auditPaymentInfoFilter, auditCallStatusFilter, auditSourceCodeFilter, auditFollowUpDateFilter, auditMinAmount, auditMaxAmount, auditSalesPersonFilter]);
+  }, [leads, sales, employeeView, auditMonth, auditSearch, auditStatus, auditRating, auditInfluencerFilter, auditGstFilter, auditPaymentInfoFilter, auditCallStatusFilter, auditSourceCodeFilter, auditFollowUpDateFilter, auditMinAmount, auditMaxAmount, auditSalesPersonFilter]);
 
   useEffect(() => {
     setAuditPage(1);
@@ -317,7 +321,10 @@ export default function SalesDashboardPage() {
   }, [sales, employeeView, reportingRange, dateRange]);
 
   // KPI Calculations
-  const totalLeads = filteredLeads.filter(isOpenLead).length;
+  // Employees: first tile is every open lead they own, not only this month.
+  const totalLeads = employeeView
+    ? leads.filter(isOpenLead).length
+    : filteredLeads.filter(isOpenLead).length;
   const leadsInScope = filteredLeads.length;
   const conversionsInSelectedRange = useMemo(() => {
     const range = employeeView ? reportingRange : dateRange;
@@ -404,7 +411,11 @@ export default function SalesDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold mb-1">{totalLeads}</div>
-              <p className="text-xs text-muted-foreground">Open leads only (excludes converted)</p>
+              <p className="text-xs text-muted-foreground">
+                {employeeView
+                  ? 'All open leads (excludes converted)'
+                  : 'Open leads only (excludes converted)'}
+              </p>
             </CardContent>
           </Card>
 
@@ -420,13 +431,17 @@ export default function SalesDashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="text-4xl font-bold mb-1 text-sky-600">{thisMonthLeadsCount}</div>
-              <p className="text-xs text-muted-foreground">New registrations</p>
+              <p className="text-xs text-muted-foreground">
+                {employeeView ? 'Open leads created this month' : 'New registrations'}
+              </p>
             </CardContent>
           </Card>
 
           <Card
             className="kpi-card card-hover border-l-4 border-l-green-500 cursor-pointer"
-            onClick={() => handleLeadsClick({ status: 'converted' })}
+            onClick={() =>
+              employeeView ? router.push('/sales/sales') : handleLeadsClick({ status: 'converted' })
+            }
           >
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Converted Leads</CardTitle>
@@ -439,7 +454,9 @@ export default function SalesDashboardPage() {
 
           <Card
             className="kpi-card card-hover border-l-4 border-l-purple-500 cursor-pointer"
-            onClick={() => handleLeadsClick({ status: 'converted' })}
+            onClick={() =>
+              employeeView ? router.push('/sales/sales') : handleLeadsClick({ status: 'converted' })
+            }
           >
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Conversion Rate</CardTitle>
@@ -658,7 +675,7 @@ export default function SalesDashboardPage() {
                           size="sm" 
                           className="h-8 px-4 text-xs font-bold text-blue-600 hover:bg-blue-50"
                           onClick={() => {
-                            setAuditStatus('all');
+                            setAuditStatus(employeeView ? 'pending' : 'all');
                             setAuditRating('all');
                             setAuditInfluencerFilter('all');
                             setAuditGstFilter('all');
@@ -684,8 +701,8 @@ export default function SalesDashboardPage() {
                               <SelectValue placeholder="Status" />
                             </SelectTrigger>
                             <SelectContent className="bg-card">
-                              <SelectItem value="all">Global Status</SelectItem>
-                              <SelectItem value="converted">Lead Converted</SelectItem>
+                              {!employeeView && <SelectItem value="all">Global Status</SelectItem>}
+                              {!employeeView && <SelectItem value="converted">Lead Converted</SelectItem>}
                               <SelectItem value="pending">Awaiting Audit</SelectItem>
                             </SelectContent>
                           </Select>

@@ -68,6 +68,13 @@ const leadSchema = z.object({
   gstStatus: z.enum(gstStatuses).default('NO'),
   paymentInfoShared: z.boolean().default(false),
 }).superRefine((data, ctx) => {
+  if (!data.followUpDate) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Follow-up date is required',
+      path: ['followUpDate'],
+    });
+  }
   if (data.callStatus === 'WRONG_NUMBER') return;
   const r = data.rating;
   if (r == null || r < 1 || r > 5) {
@@ -421,11 +428,10 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         return;
       }
 
-      const isCreateLead = !originalLead && !discoveredLead;
-      if (isCreateLead && !data.followUpDate) {
+      if (!data.followUpDate) {
         setError('followUpDate', {
           type: 'manual',
-          message: 'Follow-up date is required when creating a new lead.',
+          message: 'Follow-up date is required',
         });
         return;
       }
@@ -455,7 +461,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         gst: ['YES', 'APPLIED', 'APPLIED_THROUGH_US'].includes(data.gstStatus || 'NO'),
         gstCustomer: ['YES', 'APPLIED', 'APPLIED_THROUGH_US'].includes(data.gstStatus || 'NO'),
         paymentInfoShared: data.paymentInfoShared,
-        followUpDate: data.followUpDate ? data.followUpDate.toISOString() : null,
+        followUpDate: data.followUpDate.toISOString(),
       };
 
       console.log('🚀 Preparing to save lead. ID:', originalLead?.id || 'NEW');
@@ -559,23 +565,21 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         </Alert>
       )}
 
-      {!isEditingExistingLead && (
-        <Card className="border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 dark:border-blue-900/50 shadow-sm">
-          <CardHeader className="py-4 px-5 pb-2">
-            <div className="flex items-start gap-3">
-              <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-              <div>
-                <CardTitle className="text-sm font-semibold text-foreground">
-                  Follow-up date is required
-                </CardTitle>
-                <CardDescription className="text-sm mt-1">
-                  Pick a follow-up date before saving a new lead so it appears on your follow-up queue.
-                </CardDescription>
-              </div>
+      <Card className="border border-blue-200/80 bg-blue-50/40 dark:bg-blue-950/20 dark:border-blue-900/50 shadow-sm">
+        <CardHeader className="py-4 px-5 pb-2">
+          <div className="flex items-start gap-3">
+            <Info className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+            <div>
+              <CardTitle className="text-sm font-semibold text-foreground">
+                Follow-up date is required
+              </CardTitle>
+              <CardDescription className="text-sm mt-1">
+                Every lead must have a follow-up date. Clicking the selected date again will not remove it.
+              </CardDescription>
             </div>
-          </CardHeader>
-        </Card>
-      )}
+          </div>
+        </CardHeader>
+      </Card>
 
       {isEditingExistingLead && (
         <Card className="border border-border bg-muted/30 shadow-sm">
@@ -927,9 +931,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         <div className="space-y-2">
           <label className="text-sm font-medium">
             Follow-up Date
-            {!isEditingExistingLead && (
-              <span className="text-destructive"> *</span>
-            )}
+            <span className="text-destructive"> *</span>
           </label>
           <Popover key={`followUp-${selectMountKey}`}>
             <PopoverTrigger asChild>
@@ -949,8 +951,12 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
             <PopoverContent className="w-auto p-4 border border-border rounded-md shadow-md">
               <Calendar
                 mode="single"
+                required
                 selected={followUpDate || undefined}
-                onSelect={(date) => setValue('followUpDate', date || null)}
+                onSelect={(date) => {
+                  if (!date) return;
+                  setValue('followUpDate', date, { shouldValidate: true, shouldDirty: true });
+                }}
                 initialFocus
               />
             </PopoverContent>
