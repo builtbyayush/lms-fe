@@ -8,6 +8,15 @@ export interface MobileLeadCheckResult {
   status: MobileLeadCheckStatus;
   leadId?: string;
   leadName?: string;
+  ownerName?: string;
+}
+
+export function otherOwnerLeadMessage(ownerName?: string): string {
+  const name = ownerName?.trim();
+  if (name) {
+    return `This mobile number is already being worked on by ${name}. You cannot create a duplicate.`;
+  }
+  return 'A lead with this mobile number already exists and is managed by another team member. You cannot create a duplicate.';
 }
 
 /** Real-time duplicate check while typing mobile on create (includes other-owner case). */

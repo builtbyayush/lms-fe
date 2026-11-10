@@ -29,6 +29,7 @@ import {
 import {
   checkLeadMobileAvailability,
   fetchLeadById,
+  otherOwnerLeadMessage,
 } from '@/lib/check-lead-mobile';
 
 const toId = extractId;
@@ -299,9 +300,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
           setShowAlert(false);
           setInfluencerReadOnly(false);
           discoverySnapshotRef.current = null;
-          setMobileDuplicateMessage(
-            'A lead with this mobile number already exists and is managed by another team member. You cannot create a duplicate.',
-          );
+          setMobileDuplicateMessage(otherOwnerLeadMessage(check.ownerName));
           return;
         }
 
@@ -315,9 +314,7 @@ export function LeadForm({ initialMobile, initialData, onSuccess, onCancel, show
         if (cancelled) return;
 
         if (!found) {
-          setMobileDuplicateMessage(
-            'A lead with this mobile number already exists. You do not have access to open it.',
-          );
+          setMobileDuplicateMessage(otherOwnerLeadMessage(check.ownerName));
           setDiscoveredLead(null);
           setShowAlert(false);
           return;
